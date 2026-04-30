@@ -5,12 +5,17 @@ import { unsafeHTML }            from 'https://unpkg.com/lit@2.0.0/directives/un
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '0.0.8';
+const CARD_VERSION = '0.0.9';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v0.0.9: Editor layout: camera entity on own row, camera view+fit mode together,
+//         bar bg+aspect ratio together; remove label hints from icon, aspect ratio,
+//         bar bg color, additional YAML; badge before text in item header;
+//         more padding above show state; Image/Camera renamed Card configuration;
+//         source type button has no label; image entity label on one line
 // v0.0.8: Fix missing cpButtonPicker function definition
 // v0.0.7: Fix Terser parse errors — replace literal newlines in single-quoted
 //         strings with \\n escape sequences
@@ -800,8 +805,8 @@ class ChronoPictureCardEditor extends LitElement {
                 <ha-expansion-panel outlined>
 
                   <div slot="header" style="display:flex;align-items:center;gap:6px;">
-                    <span>${headerText}</span>
                     <span class="item-type-badge ${typeClass}">${typeLabel}</span>
+                    <span>${headerText}</span>
                   </div>
 
                   <div class="handle" slot="leading-icon">
@@ -819,7 +824,7 @@ class ChronoPictureCardEditor extends LitElement {
                   <!-- Entity-only: icon override -->
                   ${isEntity ? html`
                     <div class="item-content-row">
-                      ${cpTextField('Icon\n<i>leave empty for default, e.g. mdi:lightbulb</i>', item.icon ?? '', e => this._itemChanged(zone, index, 'icon', e))}
+                      ${cpTextField('Icon', item.icon ?? '', e => this._itemChanged(zone, index, 'icon', e))}
                     </div>
                   ` : ''}
 
@@ -851,7 +856,7 @@ class ChronoPictureCardEditor extends LitElement {
                   <!-- YAML extras textarea -->
                   <div class="item-content-row">
                     <div class="text-field">
-                      <label>Additional YAML\n<i>tap_action, hold_action, attribute, prefix, suffix, etc.</i></label>
+                      <label>Additional YAML</label>
                       <chrono-cp-textarea
                         .value=${extrasYaml}
                         placeholder=""
@@ -941,7 +946,7 @@ class ChronoPictureCardEditor extends LitElement {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 8px;
-      margin-top: 8px;
+      margin-top: 24px;
       margin-bottom: 16px;
     }
 
@@ -1123,18 +1128,22 @@ class ChronoPictureCardEditor extends LitElement {
 
       <!-- ── Image / Camera ──────────────────────────────────────────────────────────────────── -->
 
-      <ha-expansion-panel header="Image / Camera" outlined .expanded=${true}>
+      <ha-expansion-panel header="Card configuration" outlined .expanded=${true}>
 
         <!-- Source type selector -->
         <div class="image-ratio">
-          ${cpButtonPicker('Source type', sourceType, this._imageSourceTypeOptions, e => this._valueChanged('image_source_type', e))}
+          ${cpButtonPicker('', sourceType, this._imageSourceTypeOptions, e => this._valueChanged('image_source_type', e))}
         </div>
 
-        <!-- Camera fields -->
+        <!-- Camera fields — camera entity on its own row (item 1) -->
         ${sourceType === 'camera' ? html`
-          <div class="image-source">
+          <div class="image-ratio">
             ${cpTextField('Camera entity', c.camera_image ?? '', e => this._valueChanged('camera_image', e))}
+          </div>
+          <!-- Camera view + fit mode on one row (item 2) -->
+          <div class="image-source">
             ${cpSelectField('Camera view', c.camera_view ?? 'live', this._cameraViewOptions, e => this._valueChanged('camera_view', e))}
+            ${cpSelectField('Fit mode', c.fit_mode ?? 'fill', this._fitModeOptions, e => this._valueChanged('fit_mode', e))}
           </div>
         ` : ''}
 
@@ -1143,29 +1152,34 @@ class ChronoPictureCardEditor extends LitElement {
           <div class="image-ratio">
             ${cpTextField('Image URL', c.image ?? '', e => this._valueChanged('image', e))}
           </div>
-        ` : ''}
-
-        <!-- Image entity -->
-        ${sourceType === 'entity' ? html`
+          <!-- Fit mode alone when not camera -->
           <div class="image-ratio">
-            ${cpTextField('Image entity\n<i>image. or person. entity</i>', c.image_entity ?? '', e => this._valueChanged('image_entity', e))}
+            ${cpSelectField('Fit mode', c.fit_mode ?? 'fill', this._fitModeOptions, e => this._valueChanged('fit_mode', e))}
           </div>
         ` : ''}
 
-        <!-- Fit mode + optional object position -->
-        <div class="${showObjPos ? 'image-display' : 'image-source'}">
-          ${cpSelectField('Fit mode', c.fit_mode ?? 'fill', this._fitModeOptions, e => this._valueChanged('fit_mode', e))}
-          ${showObjPos ? cpSelectField('Object position', c.object_position ?? 'center', this._objectPositionOptions, e => this._valueChanged('object_position', e)) : ''}
-        </div>
+        <!-- Image entity — label on one line (item 6) -->
+        ${sourceType === 'entity' ? html`
+          <div class="image-ratio">
+            ${cpTextField('Image entity (image. or person.)', c.image_entity ?? '', e => this._valueChanged('image_entity', e))}
+          </div>
+          <!-- Fit mode alone when not camera -->
+          <div class="image-ratio">
+            ${cpSelectField('Fit mode', c.fit_mode ?? 'fill', this._fitModeOptions, e => this._valueChanged('fit_mode', e))}
+          </div>
+        ` : ''}
 
-        <!-- Aspect ratio -->
-        <div class="image-ratio">
-          ${cpTextField('Aspect ratio\n<i>e.g. 16x9 · 4x3 · 16x10 · leave empty for auto</i>', c.aspect_ratio ?? '', e => this._valueChanged('aspect_ratio', e))}
-        </div>
+        <!-- Object position — only when fit mode is not fill -->
+        ${showObjPos ? html`
+          <div class="image-ratio">
+            ${cpSelectField('Object position', c.object_position ?? 'center', this._objectPositionOptions, e => this._valueChanged('object_position', e))}
+          </div>
+        ` : ''}
 
-        <!-- Bar background color -->
-        <div class="image-ratio">
-          ${cpColorPicker('Bar background color\n<i>leave empty for default rgba(0,0,0,0.3)</i>', c.bar_background_color ?? '', e => this._valueChanged('bar_background_color', e))}
+        <!-- Bar background color + aspect ratio on one row (item 3), labels cleaned (items 4, 5) -->
+        <div class="image-source">
+          ${cpColorPicker('Bar background color', c.bar_background_color ?? '', e => this._valueChanged('bar_background_color', e))}
+          ${cpTextField('Aspect ratio', c.aspect_ratio ?? '', e => this._valueChanged('aspect_ratio', e))}
         </div>
 
         <!-- Card-level YAML textarea -->
