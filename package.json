@@ -1,0 +1,10 @@
+{
+  "name": "chrono-picture-card",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "terser src/chrono-picture-card.js -o dist/chrono-picture-card.js --compress --mangle"
+  },
+  "devDependencies": {
+    "terser": "^5.0.0"
+  }
+}

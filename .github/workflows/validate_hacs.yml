@@ -1,0 +1,19 @@
+name: HACS Action
+
+on:
+  workflow_run:
+    workflows: ["Build"]
+    types:
+      - completed
+  schedule:
+    - cron: "0 0 * * *"
+
+jobs:
+  hacs:
+    name: HACS Action
+    runs-on: "ubuntu-latest"
+    steps:
+      - name: HACS Action
+        uses: "hacs/action@main"
+        with:
+          category: "plugin"
