@@ -4,12 +4,13 @@ import { styleMap }              from 'https://unpkg.com/lit@2.0.0/directives/st
 import { unsafeHTML }            from 'https://unpkg.com/lit@2.0.0/directives/unsafe-html.js?module';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '0.0.2';
+const CARD_VERSION = '0.0.3';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v0.0.3: Add border_radius per item; expand item-typography grid to 5 columns
 // v0.0.2: Fix aspect ratio for camera feeds — pass aspect_ratio directly to
 //         hui-image; remove conflicting has-ratio container logic for camera path;
 //         set ha-card height to auto to prevent vertical stretching
@@ -42,6 +43,7 @@ const DEFAULT_ITEM = {
   font_size:        '',
   font_weight:      '',
   line_height:      '',
+  border_radius:    '',
   background_color: '',
   padding_top:      '',
   padding_bottom:   '',
@@ -71,7 +73,7 @@ const DEFAULT_CONFIG = {
 
 // ─── Numeric item keys ────────────────────────────────────────────────────────
 const NUMERIC_ITEM_KEYS = new Set([
-  'font_size', 'font_weight', 'line_height',
+  'font_size', 'font_weight', 'line_height', 'border_radius',
   'padding_top', 'padding_bottom', 'padding_left', 'padding_right',
 ]);
 
@@ -696,12 +698,13 @@ class ChronoPictureCardEditor extends LitElement {
                     </div>
                   ` : ''}
 
-                  <!-- Typography: font color, size, weight, line height -->
+                  <!-- Typography: font color, size, weight, line height, border radius -->
                   <div class="item-typography">
                     ${cpColorPicker('Font color', item.font_color ?? '', e => this._itemChanged(zone, index, 'font_color', e))}
                     ${cpTextField('Font size (em)', item.font_size   ?? '', e => this._itemChanged(zone, index, 'font_size',   e), { type: 'number', step: '0.1', min: '0' })}
                     ${cpTextField('Font weight',    item.font_weight ?? '', e => this._itemChanged(zone, index, 'font_weight', e), { type: 'number', step: '100', min: '100', max: '900' })}
                     ${cpTextField('Line height',    item.line_height ?? '', e => this._itemChanged(zone, index, 'line_height', e), { type: 'number', step: '0.1', min: '0' })}
+                    ${cpTextField('Border\nradius (px)', item.border_radius ?? '', e => this._itemChanged(zone, index, 'border_radius', e), { type: 'number', step: '1', min: '0' })}
                   </div>
 
                   <!-- Background color and padding -->
@@ -801,7 +804,7 @@ class ChronoPictureCardEditor extends LitElement {
 
     .item-typography {
       display: grid;
-      grid-template-columns: 11fr 5fr 6fr 5fr;
+      grid-template-columns: 11fr 4fr 4fr 4fr 4fr;
       gap: 8px;
       align-items: end;
       margin-bottom: 8px;
@@ -1192,6 +1195,7 @@ class ChronoPictureCard extends LitElement {
       'font-size':        (item.font_size   !== '' && item.font_size   != null) ? `${item.font_size}em` : undefined,
       'font-weight':      (item.font_weight !== '' && item.font_weight != null) ? `${item.font_weight}` : undefined,
       'line-height':      (item.line_height !== '' && item.line_height != null) ? `${item.line_height}` : undefined,
+      'border-radius':    (item.border_radius !== '' && item.border_radius != null) ? `${item.border_radius}px` : undefined,
       'background-color': item.background_color || undefined,
       'padding-top':      (item.padding_top    !== '' && item.padding_top    != null) ? `${item.padding_top}px`    : undefined,
       'padding-bottom':   (item.padding_bottom !== '' && item.padding_bottom != null) ? `${item.padding_bottom}px` : undefined,
