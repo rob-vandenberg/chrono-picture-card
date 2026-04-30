@@ -4,12 +4,14 @@ import { styleMap }              from 'https://unpkg.com/lit@2.0.0/directives/st
 import { unsafeHTML }            from 'https://unpkg.com/lit@2.0.0/directives/unsafe-html.js?module';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '0.0.3';
+const CARD_VERSION = '0.0.4';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v0.0.4: Flatten config — remove bar: wrapper and items: sublayer; zones are
+//         now top-level keys left_items, center_items, right_items
 // v0.0.3: Add border_radius per item; expand item-typography grid to 5 columns
 // v0.0.2: Fix aspect ratio for camera feeds — pass aspect_ratio directly to
 //         hui-image; remove conflicting has-ratio container logic for camera path;
@@ -64,11 +66,9 @@ const DEFAULT_CONFIG = {
   tap_action:        { action: 'more-info' },
   hold_action:       { action: 'none'      },
   double_tap_action: { action: 'none'      },
-  bar: {
-    left:   { items: [] },
-    center: { items: [] },
-    right:  { items: [] },
-  },
+  left_items:        [],
+  center_items:      [],
+  right_items:       [],
 };
 
 // ─── Numeric item keys ────────────────────────────────────────────────────────
@@ -564,22 +564,18 @@ class ChronoPictureCardEditor extends LitElement {
     } else {
       value = raw;
     }
-    const items      = [...(this._config.bar[zone]?.items ?? [])];
+    const items      = [...(this._config[`${zone}_items`] ?? [])];
     items[index]     = { ...items[index], [key]: value };
-    const bar        = { ...this._config.bar };
-    bar[zone]        = { ...bar[zone], items };
-    this._config     = { ...this._config, bar };
+    this._config     = { ...this._config, [`${zone}_items`]: items };
     this._fireConfig();
   }
 
   _itemToggled(zone, index, key, e) {
     if (!this._config) return;
     const value      = e.target.checked;
-    const items      = [...(this._config.bar[zone]?.items ?? [])];
+    const items      = [...(this._config[`${zone}_items`] ?? [])];
     items[index]     = { ...items[index], [key]: value };
-    const bar        = { ...this._config.bar };
-    bar[zone]        = { ...bar[zone], items };
-    this._config     = { ...this._config, bar };
+    this._config     = { ...this._config, [`${zone}_items`]: items };
     this._fireConfig();
   }
 
@@ -588,29 +584,23 @@ class ChronoPictureCardEditor extends LitElement {
     const base   = type === 'entity'
       ? { ...DEFAULT_ITEM, entity: '' }
       : { ...DEFAULT_ITEM, template: '' };
-    const items  = [...(this._config.bar[zone]?.items ?? []), base];
-    const bar    = { ...this._config.bar };
-    bar[zone]    = { ...bar[zone], items };
-    this._config = { ...this._config, bar };
+    const items  = [...(this._config[`${zone}_items`] ?? []), base];
+    this._config = { ...this._config, [`${zone}_items`]: items };
     this._fireConfig();
   }
 
   _removeItem(zone, index) {
-    const items  = (this._config.bar[zone]?.items ?? []).filter((_, i) => i !== index);
-    const bar    = { ...this._config.bar };
-    bar[zone]    = { ...bar[zone], items };
-    this._config = { ...this._config, bar };
+    const items  = (this._config[`${zone}_items`] ?? []).filter((_, i) => i !== index);
+    this._config = { ...this._config, [`${zone}_items`]: items };
     this._fireConfig();
   }
 
   _itemMoved(zone, e) {
     e.stopPropagation();
     const { oldIndex, newIndex } = e.detail;
-    const items  = [...(this._config.bar[zone]?.items ?? [])];
+    const items  = [...(this._config[`${zone}_items`] ?? [])];
     items.splice(newIndex, 0, items.splice(oldIndex, 1)[0]);
-    const bar    = { ...this._config.bar };
-    bar[zone]    = { ...bar[zone], items };
-    this._config = { ...this._config, bar };
+    this._config = { ...this._config, [`${zone}_items`]: items };
     this._fireConfig();
   }
 
@@ -644,7 +634,7 @@ class ChronoPictureCardEditor extends LitElement {
 
   // ── Zone panel ────────────────────────────────────────────────────────────
   _renderZonePanel(zone) {
-    const items     = this._config?.bar?.[zone]?.items ?? [];
+    const items     = this._config?.[`${zone}_items`] ?? [];
     const zoneLabel = zone.charAt(0).toUpperCase() + zone.slice(1);
 
     return html`
@@ -1050,11 +1040,9 @@ class ChronoPictureCard extends LitElement {
     return {
       ...DEFAULT_CONFIG,
       image: 'https://demo.home-assistant.io/stub_config/kitchen.png',
-      bar: {
-        left:   { items: [{ template: 'My Camera', font_color: 'white', font_size: 1.1, font_weight: 600 }] },
-        center: { items: [] },
-        right:  { items: [] },
-      },
+      left_items:   [{ template: 'My Camera', font_color: 'white', font_size: 1.1, font_weight: 600 }],
+      center_items: [],
+      right_items:  [],
     };
   }
 
@@ -1086,8 +1074,8 @@ class ChronoPictureCard extends LitElement {
 
     if (!needsResubscribe && this._config) {
       outer: for (const zone of ZONE_KEYS) {
-        const oldItems = this._config.bar?.[zone]?.items ?? [];
-        const newItems = config.bar?.[zone]?.items       ?? [];
+        const oldItems = this._config[`${zone}_items`] ?? [];
+        const newItems = config[`${zone}_items`]       ?? [];
         for (let i = 0; i < Math.max(oldItems.length, newItems.length); i++) {
           const oldTmpl = oldItems[i]?.template ?? '';
           const newTmpl = newItems[i]?.template ?? '';
@@ -1134,7 +1122,7 @@ class ChronoPictureCard extends LitElement {
     };
 
     for (const zone of ZONE_KEYS) {
-      const items = this._config?.bar?.[zone]?.items ?? [];
+      const items = this._config?.[`${zone}_items`] ?? [];
       items.forEach((item, index) => {
         if ('template' in item) {
           const key = `${zone}-${index}`;
@@ -1256,7 +1244,7 @@ class ChronoPictureCard extends LitElement {
 
   // ── Render a bar zone ─────────────────────────────────────────────────────
   _renderZone(zone) {
-    const items = this._config?.bar?.[zone]?.items ?? [];
+    const items = this._config?.[`${zone}_items`] ?? [];
     return html`
       <div class="bar-zone bar-zone-${zone}">
         ${items.map((item, index) => this._renderItem(item, zone, index))}
