@@ -2,14 +2,18 @@ import { LitElement, html, css } from 'https://unpkg.com/lit@2.0.0/index.js?modu
 import { live }                  from 'https://unpkg.com/lit@2.0.0/directives/live.js?module';
 import { styleMap }              from 'https://unpkg.com/lit@2.0.0/directives/style-map.js?module';
 import { unsafeHTML }            from 'https://unpkg.com/lit@2.0.0/directives/unsafe-html.js?module';
+import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '0.0.4';
+const CARD_VERSION = '0.0.5';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v0.0.5: Add js-yaml import; YAML textarea per item and card-level; remove
+//         Actions panel; rename zone headers to Left/Center/Right Items;
+//         _addItem no longer writes empty DEFAULT_ITEM properties
 // v0.0.4: Flatten config — remove bar: wrapper and items: sublayer; zones are
 //         now top-level keys left_items, center_items, right_items
 // v0.0.3: Add border_radius per item; expand item-typography grid to 5 columns
@@ -39,36 +43,19 @@ const DOMAINS_TOGGLE = new Set([
 
 const ZONE_KEYS = ['left', 'center', 'right'];
 
-// ─── Default item ─────────────────────────────────────────────────────────────
-const DEFAULT_ITEM = {
-  font_color:       '',
-  font_size:        '',
-  font_weight:      '',
-  line_height:      '',
-  border_radius:    '',
-  background_color: '',
-  padding_top:      '',
-  padding_bottom:   '',
-  padding_left:     '',
-  padding_right:    '',
-};
-
 // ─── Default config ───────────────────────────────────────────────────────────
 const DEFAULT_CONFIG = {
-  entity:            '',
-  camera_image:      '',
-  camera_view:       'auto',
-  image:             '',
-  image_entity:      '',
-  aspect_ratio:      '16x9',
-  fit_mode:          'cover',
-  object_position:   'center',
-  tap_action:        { action: 'more-info' },
-  hold_action:       { action: 'none'      },
-  double_tap_action: { action: 'none'      },
-  left_items:        [],
-  center_items:      [],
-  right_items:       [],
+  entity:          '',
+  camera_image:    '',
+  camera_view:     'auto',
+  image:           '',
+  image_entity:    '',
+  aspect_ratio:    '16x9',
+  fit_mode:        'cover',
+  object_position: 'center',
+  left_items:      [],
+  center_items:    [],
+  right_items:     [],
 };
 
 // ─── Numeric item keys ────────────────────────────────────────────────────────
@@ -76,6 +63,48 @@ const NUMERIC_ITEM_KEYS = new Set([
   'font_size', 'font_weight', 'line_height', 'border_radius',
   'padding_top', 'padding_bottom', 'padding_left', 'padding_right',
 ]);
+
+// ─── UI-controlled keys ───────────────────────────────────────────────────────
+// Keys managed by dedicated UI fields. All other keys go into the YAML textarea.
+const UI_ITEM_KEYS = new Set([
+  'entity', 'template',
+  'icon', 'show_state',
+  'font_color', 'font_size', 'font_weight', 'line_height', 'border_radius',
+  'background_color',
+  'padding_top', 'padding_bottom', 'padding_left', 'padding_right',
+]);
+
+const UI_CARD_KEYS = new Set([
+  'type', 'entity', 'camera_image', 'camera_view',
+  'image', 'image_entity', 'aspect_ratio', 'fit_mode', 'object_position',
+  'left_items', 'center_items', 'right_items',
+]);
+
+// ─── YAML helpers ─────────────────────────────────────────────────────────────
+function serializeExtrasToYaml(obj, uiKeys) {
+  const extras = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (!uiKeys.has(k)) extras[k] = v;
+  }
+  if (!Object.keys(extras).length) return '';
+  try {
+    return jsyaml.dump(extras, { indent: 2 }).trimEnd();
+  } catch (e) {
+    return '';
+  }
+}
+
+function parseYamlExtras(text) {
+  const trimmed = (text ?? '').trim();
+  if (!trimmed) return {};
+  try {
+    const parsed = jsyaml.load(trimmed);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
 
 // ─── Domain helpers ───────────────────────────────────────────────────────────
 function getDomain(entityId) {
@@ -242,6 +271,78 @@ class CpTextfield extends LitElement {
   }
 }
 customElements.define('chrono-cp-textfield', CpTextfield);
+
+// ─── CpTextarea component ─────────────────────────────────────────────────────
+class CpTextarea extends LitElement {
+  static properties = {
+    value:       { type: String },
+    placeholder: { type: String },
+    error:       { type: Boolean },
+  };
+
+  static styles = css`
+    :host {
+      display: block;
+      width: 100%;
+    }
+    .editor {
+      display: block;
+      width: 100%;
+      box-sizing: border-box;
+      min-height: calc(3 * 1.5em + 24px);
+      max-height: calc(20 * 1.5em + 24px);
+      padding: 12px;
+      background: var(--input-fill-color, rgba(0,0,0,0.06));
+      border: none;
+      border-bottom: 1px solid var(--secondary-text-color, #888);
+      border-radius: 4px 4px 0 0;
+      color: var(--primary-text-color);
+      font-size: 13px;
+      font-family: monospace;
+      outline: none;
+      overflow-y: auto;
+      resize: vertical;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      transition: border-bottom-color 0.2s;
+    }
+    .editor:focus {
+      border-bottom: 2px solid var(--primary-color);
+    }
+    .editor.error {
+      border-bottom: 2px solid var(--error-color, #f44336);
+    }
+    .editor:empty:before {
+      content: attr(data-placeholder);
+      color: var(--secondary-text-color);
+      pointer-events: none;
+    }
+  `;
+
+  updated(changedProps) {
+    if (changedProps.has('value')) {
+      const el = this.shadowRoot.querySelector('.editor');
+      if (el && el !== document.activeElement && el.innerText !== this.value) {
+        el.innerText = this.value ?? '';
+      }
+    }
+  }
+
+  render() {
+    return html`
+      <div
+        class="editor${this.error ? ' error' : ''}"
+        contenteditable="true"
+        data-placeholder=${this.placeholder ?? ''}
+        @input=${e => {
+          this.value = e.target.innerText;
+          this.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+        }}
+      ></div>
+    `;
+  }
+}
+customElements.define('chrono-cp-textarea', CpTextarea);
 
 // ─── CpButtonToggleGroup component ───────────────────────────────────────────
 class CpButtonToggleGroup extends LitElement {
@@ -537,22 +638,22 @@ class ChronoPictureCardEditor extends LitElement {
     this._fireConfig();
   }
 
-  // ── Action object changed (tap/hold/double_tap) ───────────────────────────
-  _actionChanged(key, e) {
+  // ── Card-level YAML textarea changed ─────────────────────────────────────
+  _cardYamlChanged(e) {
     if (!this._config) return;
-    const action = e.detail?.value ?? e.target.value;
-    this._config = { ...this._config, [key]: { ...this._config[key], action } };
+    const text   = e.target.value ?? e.detail?.value ?? '';
+    const parsed = parseYamlExtras(text);
+    if (parsed === null) return; // invalid YAML — don't save
+    // Remove all existing non-UI keys from config, then merge parsed extras
+    const clean = {};
+    for (const [k, v] of Object.entries(this._config)) {
+      if (UI_CARD_KEYS.has(k)) clean[k] = v;
+    }
+    this._config = { ...clean, ...parsed };
     this._fireConfig();
   }
 
-  _actionNavPathChanged(key, e) {
-    if (!this._config) return;
-    const navigation_path = e.target.value ?? e.detail?.value;
-    this._config = { ...this._config, [key]: { ...this._config[key], navigation_path } };
-    this._fireConfig();
-  }
-
-  // ── Item-level value changed ──────────────────────────────────────────────
+  // ── Item-level UI field changed ───────────────────────────────────────────
   _itemChanged(zone, index, key, e) {
     if (!this._config) return;
     const raw = e.target.value ?? e.detail?.value;
@@ -570,6 +671,24 @@ class ChronoPictureCardEditor extends LitElement {
     this._fireConfig();
   }
 
+  // ── Item-level YAML textarea changed ─────────────────────────────────────
+  _itemYamlChanged(zone, index, e) {
+    if (!this._config) return;
+    const text   = e.target.value ?? e.detail?.value ?? '';
+    const parsed = parseYamlExtras(text);
+    if (parsed === null) return; // invalid YAML — don't save
+    const items  = [...(this._config[`${zone}_items`] ?? [])];
+    const item   = items[index];
+    // Keep only UI-controlled keys from the existing item, then merge extras
+    const clean  = {};
+    for (const [k, v] of Object.entries(item)) {
+      if (UI_ITEM_KEYS.has(k)) clean[k] = v;
+    }
+    items[index]     = { ...clean, ...parsed };
+    this._config     = { ...this._config, [`${zone}_items`]: items };
+    this._fireConfig();
+  }
+
   _itemToggled(zone, index, key, e) {
     if (!this._config) return;
     const value      = e.target.checked;
@@ -581,9 +700,7 @@ class ChronoPictureCardEditor extends LitElement {
 
   // ── Add / remove / reorder items ──────────────────────────────────────────
   _addItem(zone, type) {
-    const base   = type === 'entity'
-      ? { ...DEFAULT_ITEM, entity: '' }
-      : { ...DEFAULT_ITEM, template: '' };
+    const base   = type === 'entity' ? { entity: '' } : { template: '' };
     const items  = [...(this._config[`${zone}_items`] ?? []), base];
     this._config = { ...this._config, [`${zone}_items`]: items };
     this._fireConfig();
@@ -632,13 +749,14 @@ class ChronoPictureCardEditor extends LitElement {
     { label: 'None',          value: 'none'         },
   ];
 
-  // ── Zone panel ────────────────────────────────────────────────────────────
+  // ─── Zone panel ────────────────────────────────────────────────────────────────────────────
   _renderZonePanel(zone) {
-    const items     = this._config?.[`${zone}_items`] ?? [];
-    const zoneLabel = zone.charAt(0).toUpperCase() + zone.slice(1);
+    const items      = this._config?.[`${zone}_items`] ?? [];
+    const zoneLabels = { left: 'Left Items', center: 'Center Items', right: 'Right Items' };
+    const zoneLabel  = zoneLabels[zone];
 
     return html`
-      <ha-expansion-panel header="Bar — ${zoneLabel}" outlined>
+      <ha-expansion-panel header="${zoneLabel}" outlined>
 
         <ha-sortable handle-selector=".handle" @item-moved=${(e) => this._itemMoved(zone, e)}>
           <div class="items-list">
@@ -653,6 +771,8 @@ class ChronoPictureCardEditor extends LitElement {
                         ? item.template.slice(0, 35) + '…'
                         : item.template)
                     : `Template ${index + 1}`);
+
+              const extrasYaml = serializeExtrasToYaml(item, UI_ITEM_KEYS);
 
               return html`
                 <ha-expansion-panel outlined>
@@ -706,6 +826,18 @@ class ChronoPictureCardEditor extends LitElement {
                     ${cpTextField('Padding\nright (px)',  item.padding_right  ?? '', e => this._itemChanged(zone, index, 'padding_right',  e), { type: 'number', step: '1', min: '0' })}
                   </div>
 
+                  <!-- YAML extras textarea -->
+                  <div class="item-content-row">
+                    <div class="text-field">
+                      <label>Additional YAML\n<i>tap_action, hold_action, attribute, prefix, suffix, etc.</i></label>
+                      <chrono-cp-textarea
+                        .value=${extrasYaml}
+                        placeholder="tap_action:\n  action: toggle"
+                        @input=${e => this._itemYamlChanged(zone, index, e)}
+                      ></chrono-cp-textarea>
+                    </div>
+                  </div>
+
                   <!-- Remove button -->
                   <div class="remove-item-row">
                     <button class="remove-item-btn" @click=${() => this._removeItem(zone, index)}>
@@ -727,7 +859,6 @@ class ChronoPictureCardEditor extends LitElement {
       </ha-expansion-panel>
     `;
   }
-
   static styles = css`
 
     ha-expansion-panel {
@@ -961,14 +1092,12 @@ class ChronoPictureCardEditor extends LitElement {
   render() {
     if (!this._config) return html``;
 
-    const c = this._config;
-
-    const anyNavigate = [c.tap_action, c.hold_action, c.double_tap_action]
-      .some(a => a?.action === 'navigate');
+    const c        = this._config;
+    const cardYaml = serializeExtrasToYaml(c, UI_CARD_KEYS);
 
     return html`
 
-      <!-- ── Image / Camera ──────────────────────────────────────────────── -->
+      <!-- ── Image / Camera ──────────────────────────────────────────────────────────────────── -->
 
       <ha-expansion-panel header="Image / Camera" outlined .expanded=${true}>
 
@@ -992,27 +1121,21 @@ class ChronoPictureCardEditor extends LitElement {
           ${cpTextField('Aspect ratio\n<i>e.g. 16x9 · 4x3 · 16x10</i>', c.aspect_ratio ?? '', e => this._valueChanged('aspect_ratio', e))}
         </div>
 
-      </ha-expansion-panel>
-
-      <!-- ── Actions ─────────────────────────────────────────────────────── -->
-
-      <ha-expansion-panel header="Actions" outlined>
-
-        <div class="actions-row">
-          ${cpSelectField('Tap action',        c.tap_action?.action,        this._actionOptions, e => this._actionChanged('tap_action',        e))}
-          ${cpSelectField('Hold action',       c.hold_action?.action,       this._actionOptions, e => this._actionChanged('hold_action',       e))}
-          ${cpSelectField('Double tap action', c.double_tap_action?.action, this._actionOptions, e => this._actionChanged('double_tap_action', e))}
+        <!-- Card-level YAML textarea -->
+        <div class="image-ratio">
+          <div class="text-field">
+            <label>Additional YAML\n<i>tap_action, hold_action, double_tap_action, etc.</i></label>
+            <chrono-cp-textarea
+              .value=${cardYaml}
+              placeholder="tap_action:\n  action: navigate\n  navigation_path: /lovelace"
+              @input=${e => this._cardYamlChanged(e)}
+            ></chrono-cp-textarea>
+          </div>
         </div>
 
-        ${anyNavigate ? html`
-          <div class="nav-path-row">
-            ${cpTextField('Navigation path', c.tap_action?.navigation_path ?? '', e => this._actionNavPathChanged('tap_action', e))}
-          </div>
-        ` : ''}
-
       </ha-expansion-panel>
 
-      <!-- ── Bar zones ───────────────────────────────────────────────────── -->
+      <!-- ── Zone panels ───────────────────────────────────────────────────────────────────────────────── -->
 
       ${ZONE_KEYS.map(zone => this._renderZonePanel(zone))}
 
