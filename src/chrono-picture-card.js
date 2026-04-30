@@ -4,12 +4,15 @@ import { styleMap }              from 'https://unpkg.com/lit@2.0.0/directives/st
 import { unsafeHTML }            from 'https://unpkg.com/lit@2.0.0/directives/unsafe-html.js?module';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '0.0.1';
+const CARD_VERSION = '0.0.2';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v0.0.2: Fix aspect ratio for camera feeds — pass aspect_ratio directly to
+//         hui-image; remove conflicting has-ratio container logic for camera path;
+//         set ha-card height to auto to prevent vertical stretching
 // v0.0.1: Initial release — image/camera feed with live template bar,
 //         three fixed zones (left/center/right), entity items with default
 //         domain actions, template items with server-side Jinja2 via
@@ -1265,32 +1268,34 @@ class ChronoPictureCard extends LitElement {
       position: relative;
       min-height: 48px;
       overflow: hidden;
-      height: 100%;
+      height: auto;
       box-sizing: border-box;
     }
     .image-container {
       width: 100%;
-      height: 100%;
       position: relative;
-    }
-    .image-container.has-ratio {
-      height: 0;
     }
     .image-container.clickable {
       cursor: pointer;
     }
-    hui-image,
+    hui-image {
+      display: block;
+      width: 100%;
+      pointer-events: none;
+    }
     .image-container img {
       display: block;
       width: 100%;
-      height: 100%;
       pointer-events: none;
     }
-    .image-container.has-ratio hui-image,
+    .image-container.has-ratio {
+      height: 0;
+    }
     .image-container.has-ratio img {
       position: absolute;
       top: 0;
       left: 0;
+      height: 100%;
     }
     .bar {
       position: absolute;
@@ -1384,13 +1389,20 @@ class ChronoPictureCard extends LitElement {
       'object-position': objPosition,
     };
 
+    const isClickable = c.tap_action?.action && c.tap_action.action !== 'none';
+
+    // For camera path: hui-image handles aspect ratio internally via .aspectRatio.
+    // Do NOT apply has-ratio / padding-bottom on the container — it conflicts.
+    // For static image path: use the padding-bottom trick on the container.
     const containerClass = [
       'image-container',
-      aspectPadding ? 'has-ratio' : '',
-      (c.tap_action?.action && c.tap_action.action !== 'none') ? 'clickable' : '',
+      !c.camera_image && aspectPadding ? 'has-ratio' : '',
+      isClickable ? 'clickable' : '',
     ].filter(Boolean).join(' ');
 
-    const containerStyle = aspectPadding ? `padding-bottom: ${aspectPadding};` : '';
+    const containerStyle = (!c.camera_image && aspectPadding)
+      ? `padding-bottom: ${aspectPadding};`
+      : '';
 
     return html`
       <ha-card>
@@ -1406,7 +1418,7 @@ class ChronoPictureCard extends LitElement {
                   .cameraImage=${c.camera_image}
                   .cameraView=${c.camera_view}
                   .fitMode=${fitMode}
-                  .aspectRatio=${aspectPadding ? undefined : c.aspect_ratio}
+                  .aspectRatio=${c.aspect_ratio}
                   style=${styleMap(imgStyles)}
                 ></hui-image>
               `
