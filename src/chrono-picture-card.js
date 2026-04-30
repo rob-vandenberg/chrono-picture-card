@@ -5,12 +5,16 @@ import { unsafeHTML }            from 'https://unpkg.com/lit@2.0.0/directives/un
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '0.0.5';
+const CARD_VERSION = '0.0.6';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v0.0.6: Add image_source_type button picker (Camera/Image URL/Image entity);
+//         restore bar_background_color config + editor; new defaults (camera_view:
+//         live, fit_mode: fill, aspect_ratio: ''); hide object_position when
+//         fit_mode is fill; remove textarea placeholders
 // v0.0.5: Add js-yaml import; YAML textarea per item and card-level; remove
 //         Actions panel; rename zone headers to Left/Center/Right Items;
 //         _addItem no longer writes empty DEFAULT_ITEM properties
@@ -45,17 +49,19 @@ const ZONE_KEYS = ['left', 'center', 'right'];
 
 // ─── Default config ───────────────────────────────────────────────────────────
 const DEFAULT_CONFIG = {
-  entity:          '',
-  camera_image:    '',
-  camera_view:     'auto',
-  image:           '',
-  image_entity:    '',
-  aspect_ratio:    '16x9',
-  fit_mode:        'cover',
-  object_position: 'center',
-  left_items:      [],
-  center_items:    [],
-  right_items:     [],
+  image_source_type: 'camera',
+  entity:            '',
+  camera_image:      '',
+  camera_view:       'live',
+  image:             '',
+  image_entity:      '',
+  aspect_ratio:      '',
+  fit_mode:          'fill',
+  object_position:   'center',
+  bar_background_color: '',
+  left_items:        [],
+  center_items:      [],
+  right_items:       [],
 };
 
 // ─── Numeric item keys ────────────────────────────────────────────────────────
@@ -75,8 +81,9 @@ const UI_ITEM_KEYS = new Set([
 ]);
 
 const UI_CARD_KEYS = new Set([
-  'type', 'entity', 'camera_image', 'camera_view',
+  'type', 'image_source_type', 'entity', 'camera_image', 'camera_view',
   'image', 'image_entity', 'aspect_ratio', 'fit_mode', 'object_position',
+  'bar_background_color',
   'left_items', 'center_items', 'right_items',
 ]);
 
@@ -722,6 +729,12 @@ class ChronoPictureCardEditor extends LitElement {
   }
 
   // ── Option arrays ─────────────────────────────────────────────────────────
+  _imageSourceTypeOptions = [
+    { label: 'Camera',      value: 'camera'   },
+    { label: 'Image URL',   value: 'url'      },
+    { label: 'Image entity',value: 'entity'   },
+  ];
+
   _cameraViewOptions = [
     { label: 'Auto', value: 'auto' },
     { label: 'Live', value: 'live' },
@@ -739,14 +752,6 @@ class ChronoPictureCardEditor extends LitElement {
     { label: 'Bottom', value: 'bottom' },
     { label: 'Left',   value: 'left'   },
     { label: 'Right',  value: 'right'  },
-  ];
-
-  _actionOptions = [
-    { label: 'More info',     value: 'more-info'    },
-    { label: 'Toggle',        value: 'toggle'       },
-    { label: 'Navigate',      value: 'navigate'     },
-    { label: 'Call service',  value: 'call-service' },
-    { label: 'None',          value: 'none'         },
   ];
 
   // ─── Zone panel ────────────────────────────────────────────────────────────────────────────
@@ -832,7 +837,7 @@ class ChronoPictureCardEditor extends LitElement {
                       <label>Additional YAML\n<i>tap_action, hold_action, attribute, prefix, suffix, etc.</i></label>
                       <chrono-cp-textarea
                         .value=${extrasYaml}
-                        placeholder="tap_action:\n  action: toggle"
+                        placeholder=""
                         @input=${e => this._itemYamlChanged(zone, index, e)}
                       ></chrono-cp-textarea>
                     </div>
@@ -1092,8 +1097,10 @@ class ChronoPictureCardEditor extends LitElement {
   render() {
     if (!this._config) return html``;
 
-    const c        = this._config;
-    const cardYaml = serializeExtrasToYaml(c, UI_CARD_KEYS);
+    const c              = this._config;
+    const cardYaml       = serializeExtrasToYaml(c, UI_CARD_KEYS);
+    const sourceType     = c.image_source_type ?? 'camera';
+    const showObjPos     = (c.fit_mode ?? 'fill') !== 'fill';
 
     return html`
 
@@ -1101,33 +1108,60 @@ class ChronoPictureCardEditor extends LitElement {
 
       <ha-expansion-panel header="Image / Camera" outlined .expanded=${true}>
 
-        <div class="image-source">
-          ${cpTextField('Entity', c.entity ?? '', e => this._valueChanged('entity', e))}
-          ${cpTextField('Camera image entity', c.camera_image ?? '', e => this._valueChanged('camera_image', e))}
-        </div>
-
-        <div class="image-source">
-          ${cpTextField('Static image URL', c.image ?? '', e => this._valueChanged('image', e))}
-          ${cpTextField('Image entity', c.image_entity ?? '', e => this._valueChanged('image_entity', e))}
-        </div>
-
-        <div class="image-display">
-          ${cpSelectField('Camera view',     c.camera_view,     this._cameraViewOptions,     e => this._valueChanged('camera_view',     e))}
-          ${cpSelectField('Fit mode',        c.fit_mode,        this._fitModeOptions,        e => this._valueChanged('fit_mode',        e))}
-          ${cpSelectField('Object position', c.object_position, this._objectPositionOptions, e => this._valueChanged('object_position', e))}
-        </div>
-
+        <!-- Source type selector -->
         <div class="image-ratio">
-          ${cpTextField('Aspect ratio\n<i>e.g. 16x9 · 4x3 · 16x10</i>', c.aspect_ratio ?? '', e => this._valueChanged('aspect_ratio', e))}
+          ${cpButtonPicker('Source type', sourceType, this._imageSourceTypeOptions, e => this._valueChanged('image_source_type', e))}
+        </div>
+
+        <!-- Camera fields -->
+        ${sourceType === 'camera' ? html`
+          <div class="image-source">
+            ${cpTextField('Camera entity', c.camera_image ?? '', e => this._valueChanged('camera_image', e))}
+            ${cpSelectField('Camera view', c.camera_view ?? 'live', this._cameraViewOptions, e => this._valueChanged('camera_view', e))}
+          </div>
+        ` : ''}
+
+        <!-- Static image URL -->
+        ${sourceType === 'url' ? html`
+          <div class="image-ratio">
+            ${cpTextField('Image URL', c.image ?? '', e => this._valueChanged('image', e))}
+          </div>
+        ` : ''}
+
+        <!-- Image entity -->
+        ${sourceType === 'entity' ? html`
+          <div class="image-ratio">
+            ${cpTextField('Image entity
+<i>image. or person. entity</i>', c.image_entity ?? '', e => this._valueChanged('image_entity', e))}
+          </div>
+        ` : ''}
+
+        <!-- Fit mode + optional object position -->
+        <div class="${showObjPos ? 'image-display' : 'image-source'}">
+          ${cpSelectField('Fit mode', c.fit_mode ?? 'fill', this._fitModeOptions, e => this._valueChanged('fit_mode', e))}
+          ${showObjPos ? cpSelectField('Object position', c.object_position ?? 'center', this._objectPositionOptions, e => this._valueChanged('object_position', e)) : ''}
+        </div>
+
+        <!-- Aspect ratio -->
+        <div class="image-ratio">
+          ${cpTextField('Aspect ratio
+<i>e.g. 16x9 · 4x3 · 16x10 · leave empty for auto</i>', c.aspect_ratio ?? '', e => this._valueChanged('aspect_ratio', e))}
+        </div>
+
+        <!-- Bar background color -->
+        <div class="image-ratio">
+          ${cpColorPicker('Bar background color
+<i>leave empty for default rgba(0,0,0,0.3)</i>', c.bar_background_color ?? '', e => this._valueChanged('bar_background_color', e))}
         </div>
 
         <!-- Card-level YAML textarea -->
         <div class="image-ratio">
           <div class="text-field">
-            <label>Additional YAML\n<i>tap_action, hold_action, double_tap_action, etc.</i></label>
+            <label>Additional YAML
+<i>tap_action, hold_action, double_tap_action, etc.</i></label>
             <chrono-cp-textarea
               .value=${cardYaml}
-              placeholder="tap_action:\n  action: navigate\n  navigation_path: /lovelace"
+              placeholder=""
               @input=${e => this._cardYamlChanged(e)}
             ></chrono-cp-textarea>
           </div>
@@ -1547,7 +1581,7 @@ class ChronoPictureCard extends LitElement {
           }
         </div>
 
-        <div class="bar">
+        <div class="bar" style=${c.bar_background_color ? `background-color:${c.bar_background_color}` : ''}}>
           ${ZONE_KEYS.map(zone => this._renderZone(zone))}
         </div>
       </ha-card>
