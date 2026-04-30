@@ -5,12 +5,14 @@ import { unsafeHTML }            from 'https://unpkg.com/lit@2.0.0/directives/un
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '0.0.6';
+const CARD_VERSION = '0.0.7';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v0.0.7: Fix Terser parse errors — replace literal newlines in single-quoted
+//         strings with \\n escape sequences
 // v0.0.6: Add image_source_type button picker (Camera/Image URL/Image entity);
 //         restore bar_background_color config + editor; new defaults (camera_view:
 //         live, fit_mode: fill, aspect_ratio: ''); hide object_position when
@@ -1131,8 +1133,7 @@ class ChronoPictureCardEditor extends LitElement {
         <!-- Image entity -->
         ${sourceType === 'entity' ? html`
           <div class="image-ratio">
-            ${cpTextField('Image entity
-<i>image. or person. entity</i>', c.image_entity ?? '', e => this._valueChanged('image_entity', e))}
+            ${cpTextField('Image entity\n<i>image. or person. entity</i>', c.image_entity ?? '', e => this._valueChanged('image_entity', e))}
           </div>
         ` : ''}
 
@@ -1144,21 +1145,18 @@ class ChronoPictureCardEditor extends LitElement {
 
         <!-- Aspect ratio -->
         <div class="image-ratio">
-          ${cpTextField('Aspect ratio
-<i>e.g. 16x9 · 4x3 · 16x10 · leave empty for auto</i>', c.aspect_ratio ?? '', e => this._valueChanged('aspect_ratio', e))}
+          ${cpTextField('Aspect ratio\n<i>e.g. 16x9 · 4x3 · 16x10 · leave empty for auto</i>', c.aspect_ratio ?? '', e => this._valueChanged('aspect_ratio', e))}
         </div>
 
         <!-- Bar background color -->
         <div class="image-ratio">
-          ${cpColorPicker('Bar background color
-<i>leave empty for default rgba(0,0,0,0.3)</i>', c.bar_background_color ?? '', e => this._valueChanged('bar_background_color', e))}
+          ${cpColorPicker('Bar background color\n<i>leave empty for default rgba(0,0,0,0.3)</i>', c.bar_background_color ?? '', e => this._valueChanged('bar_background_color', e))}
         </div>
 
         <!-- Card-level YAML textarea -->
         <div class="image-ratio">
           <div class="text-field">
-            <label>Additional YAML
-<i>tap_action, hold_action, double_tap_action, etc.</i></label>
+            <label>Additional YAML<br><i>tap_action, hold_action, double_tap_action, etc.</i></label>
             <chrono-cp-textarea
               .value=${cardYaml}
               placeholder=""
