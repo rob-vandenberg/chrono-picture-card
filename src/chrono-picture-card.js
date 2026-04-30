@@ -5,12 +5,14 @@ import { unsafeHTML }            from 'https://unpkg.com/lit@2.0.0/directives/un
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '0.0.9';
+const CARD_VERSION = '0.0.10';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v0.0.10: bar_background_color default #0000004D; remove CSS bar background
+//          fallback — empty value now means no background at all
 // v0.0.9: Editor layout: camera entity on own row, camera view+fit mode together,
 //         bar bg+aspect ratio together; remove label hints from icon, aspect ratio,
 //         bar bg color, additional YAML; badge before text in item header;
@@ -66,7 +68,7 @@ const DEFAULT_CONFIG = {
   aspect_ratio:      '',
   fit_mode:          'fill',
   object_position:   'center',
-  bar_background_color: '',
+  bar_background_color: '#0000004D',
   left_items:        [],
   center_items:      [],
   right_items:       [],
@@ -1224,6 +1226,7 @@ class ChronoPictureCard extends LitElement {
     return {
       ...DEFAULT_CONFIG,
       image: 'https://demo.home-assistant.io/stub_config/kitchen.png',
+      bar_background_color: '#0000004D',
       left_items:   [{ template: 'My Camera', font_color: 'white', font_size: 1.1, font_weight: 600 }],
       center_items: [],
       right_items:  [],
@@ -1478,10 +1481,6 @@ class ChronoPictureCard extends LitElement {
       left: 0;
       right: 0;
       bottom: 0;
-      background-color: var(
-        --ha-picture-card-background-color,
-        rgba(0, 0, 0, 0.3)
-      );
       padding: 4px 8px;
       display: flex;
       flex-direction: row;
