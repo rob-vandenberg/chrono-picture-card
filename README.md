@@ -5,7 +5,7 @@
   [![](https://img.shields.io/badge/License-AGPL_3.0-blue.svg?style=for-the-badge)](https://www.gnu.org/licenses/agpl-3.0)
   [![](https://img.shields.io/badge/Version-0.0.12-brightgreen.svg?style=for-the-badge)](#)
 
-  <img src="art/header.svg" width="780" alt="Chrono Picture Card Banner">
+  <img src="art/chrono-picture-card.svg" width="780" alt="Chrono Picture Card Banner">
 
   <img src="art/banner.png" width="800" alt="Chrono Picture Card Banner">
 

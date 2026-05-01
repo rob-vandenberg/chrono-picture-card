@@ -5,12 +5,30 @@ import { unsafeHTML }            from 'https://unpkg.com/lit@2.0.0/directives/un
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '0.1.23';
+const CARD_VERSION = '0.1.31';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v0.1.31: Fix input-select-popup template resolution — use subscribeMessage
+//          (same as template bar items) to render {{ }} in on_select data
+// v0.1.30: Fix input-select-popup — fire select_option then immediately send
+//          render_template on same WebSocket; sequential processing guarantees
+//          server renders template after state is updated
+// v0.1.29: Fix input-select-popup — after state_changed confirms new state,
+//          render {{ }} templates in on_select.data server-side via render_template
+//          WebSocket call, guaranteeing fresh state values
+// v0.1.28: Fix input-select-popup — wait for state_changed event confirming
+//          new state before firing on_select, guaranteeing correct template resolution
+// v0.1.28: Fix input-select-popup timing — subscribe to state_changed before
+//          calling service; fire on_select only after HA confirms new state
+// v0.1.27: Fix input-select-popup — await callService before firing on_select
+// v0.1.26: Remove hardcoded display parameter injection from input-select-popup;
+//          on_select fires as-is after input_select is set
+// v0.1.25: Fix input-select-popup — popup overlay was missing from render method
+// v0.1.24: Fix call-service data template resolution — {{ states('x') }}
+//          now resolved client-side before calling service
 // v0.1.23: Rename input_select-popup to input-select-popup
 // v0.1.22: Add input-select-popup action — built-in popup list from an
 //          input_select entity; on_select fires after option chosen with
@@ -1389,7 +1407,11 @@ class ChronoPictureCard extends LitElement {
         break;
       case 'call-service': {
         const [domain, service] = (action.service || '').split('.');
-        if (domain && service) this._hass.callService(domain, service, action.data || {});
+        if (domain && service) {
+          // Resolve any {{ }} Jinja2 templates in data values client-side
+          const resolvedData = this._resolveDataTemplates(action.data || {});
+          this._hass.callService(domain, service, resolvedData);
+        }
         break;
       }
       case 'url':
@@ -1413,25 +1435,89 @@ class ChronoPictureCard extends LitElement {
     }
   }
 
-  // ── Popup option selected ─────────────────────────────────────────────────
-  _selectPopupOption(option) {
+  // ── Resolve {{ }} templates in data values (client-side approximation) ─────
+  _resolveDataTemplates(data) {
+    const resolved = {};
+    for (const [key, val] of Object.entries(data)) {
+      if (typeof val === 'string' && val.includes('{{')) {
+        // Replace {{ states('entity') }} with current state value
+        resolved[key] = val.replace(/\{\{\s*states\(\s*['"](.*?)['"]\s*\)\s*\}\}/g, (_, entityId) => {
+          return this._hass.states[entityId]?.state ?? '';
+        });
+      } else {
+        resolved[key] = val;
+      }
+    }
+    return resolved;
+  }
+
+
+
+
+  // ── Popup option selected ──────────────────────────────────────────────────────────────────────────
+  async _selectPopupOption(option) {
     const popup = this._popup;
     this._popup  = null;
 
-    // Set the input_select to the chosen option
-    this._hass.callService('input_select', 'select_option', {
-      entity_id: popup.entity,
-      option,
-    });
-
-    // Fire the on_select action if defined, injecting the chosen option
-    if (popup.on_select) {
-      const action = { ...popup.on_select };
-      if (action.data) {
-        action.data = { ...action.data, display: option };
-      }
-      this._fireAction(null, action);
+    if (!popup.on_select) {
+      // No on_select action — just set the input_select and done
+      this._hass.callService('input_select', 'select_option', {
+        entity_id: popup.entity,
+        option,
+      });
+      return;
     }
+
+    const action = { ...popup.on_select };
+
+    if (action.data) {
+      // Resolve any {{ }} templates in data values using subscribeMessage —
+      // the same mechanism used by template bar items, proven to work.
+      // We fire select_option first (no await), then immediately subscribe
+      // to render_template. WebSocket sequential processing guarantees
+      // render_template runs after select_option on the server.
+      this._hass.callService('input_select', 'select_option', {
+        entity_id: popup.entity,
+        option,
+      });
+
+      const resolvedData = {};
+      const templateKeys = Object.entries(action.data).filter(
+        ([, val]) => typeof val === 'string' && val.includes('{{')
+      );
+      const plainKeys = Object.entries(action.data).filter(
+        ([, val]) => !(typeof val === 'string' && val.includes('{{'))
+      );
+
+      // Copy plain values directly
+      for (const [key, val] of plainKeys) {
+        resolvedData[key] = val;
+      }
+
+      // Resolve each template key using subscribeMessage (one-shot)
+      await Promise.all(templateKeys.map(([key, tmpl]) =>
+        new Promise((resolve) => {
+          const unsubPromise = this._hass.connection.subscribeMessage(
+            (msg) => {
+              resolvedData[key] = msg.result;
+              unsubPromise.then(fn => fn());
+              resolve();
+            },
+            { type: 'render_template', template: tmpl }
+          );
+        })
+      ));
+
+      action.data = resolvedData;
+    } else {
+      // No data — just set input_select then fire action
+      this._hass.callService('input_select', 'select_option', {
+        entity_id: popup.entity,
+        option,
+      });
+    }
+
+    this._fireAction(null, action);
   }
 
   // ── Item style map ────────────────────────────────────────────────────────
@@ -1739,6 +1825,22 @@ class ChronoPictureCard extends LitElement {
         <div class="bar bar-bottom" style=${styleMap({'background-color': c.bottom_bar_background_color || undefined})}>
           ${ZONE_KEYS.map(zone => this._renderZone(zone, 'bottom'))}
         </div>
+
+        ${this._popup ? html`
+          <div class="popup-overlay" @click=${() => { this._popup = null; }}>
+            <div class="popup-panel" @click=${(e) => e.stopPropagation()}>
+              ${this._popup.options.map(option => html`
+                <div
+                  class="popup-option${option === this._popup.current ? ' selected' : ''}"
+                  @click=${() => this._selectPopupOption(option)}
+                >
+                  <span class="popup-option-dot"></span>
+                  ${option}
+                </div>
+              `)}
+            </div>
+          </div>
+        ` : ''}
       </ha-card>
     `;
   }
