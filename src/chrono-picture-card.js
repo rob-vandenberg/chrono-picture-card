@@ -5,12 +5,16 @@ import { unsafeHTML }            from 'https://unpkg.com/lit@2.0.0/directives/un
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '0.0.12';
+const CARD_VERSION = '0.1.20';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v0.1.20: Add vertical (top/bottom) property per item; add top bar with
+//          top_bar_background_color; rename bar_background_color to
+//          bottom_bar_background_color; update item-typography and
+//          item-bg-color-padding grid columns to 19fr 8fr 8fr 8fr 8fr
 // v0.0.12: Actually fix bar background color — correct line-level replacement
 // v0.0.11: Fix bar background color not applied — use styleMap instead of
 //          plain string interpolation
@@ -71,7 +75,8 @@ const DEFAULT_CONFIG = {
   aspect_ratio:      '',
   fit_mode:          'fill',
   object_position:   'center',
-  bar_background_color: '#0000004D',
+  bottom_bar_background_color: '#0000004D',
+  top_bar_background_color:    '',
   left_items:        [],
   center_items:      [],
   right_items:       [],
@@ -87,6 +92,7 @@ const NUMERIC_ITEM_KEYS = new Set([
 // Keys managed by dedicated UI fields. All other keys go into the YAML textarea.
 const UI_ITEM_KEYS = new Set([
   'entity', 'template',
+  'vertical', 'position',
   'icon', 'show_state',
   'font_color', 'font_size', 'font_weight', 'line_height', 'border_radius',
   'background_color',
@@ -96,7 +102,7 @@ const UI_ITEM_KEYS = new Set([
 const UI_CARD_KEYS = new Set([
   'type', 'image_source_type', 'entity', 'camera_image', 'camera_view',
   'image', 'image_entity', 'aspect_ratio', 'fit_mode', 'object_position',
-  'bar_background_color',
+  'bottom_bar_background_color', 'top_bar_background_color',
   'left_items', 'center_items', 'right_items',
 ]);
 
@@ -734,7 +740,7 @@ class ChronoPictureCardEditor extends LitElement {
 
   // ── Add / remove / reorder items ──────────────────────────────────────────
   _addItem(zone, type) {
-    const base   = type === 'entity' ? { entity: '' } : { template: '' };
+    const base   = type === 'entity' ? { entity: '', vertical: 'bottom' } : { template: '', vertical: 'bottom' };
     const items  = [...(this._config[`${zone}_items`] ?? []), base];
     this._config = { ...this._config, [`${zone}_items`]: items };
     this._fireConfig();
@@ -756,6 +762,17 @@ class ChronoPictureCardEditor extends LitElement {
   }
 
   // ── Option arrays ─────────────────────────────────────────────────────────
+  _verticalOptions = [
+    { label: 'Bottom', value: 'bottom' },
+    { label: 'Top',    value: 'top'    },
+  ];
+
+  _positionOptions = [
+    { label: 'Left',   value: 'left'   },
+    { label: 'Center', value: 'center' },
+    { label: 'Right',  value: 'right'  },
+  ];
+
   _imageSourceTypeOptions = [
     { label: 'Camera',      value: 'camera'   },
     { label: 'Image URL',   value: 'url'      },
@@ -816,6 +833,12 @@ class ChronoPictureCardEditor extends LitElement {
 
                   <div class="handle" slot="leading-icon">
                     <ha-svg-icon .path=${mdiDragHorizontalVariant}></ha-svg-icon>
+                  </div>
+
+                  <!-- Vertical + position button groups -->
+                  <div class="item-position-row">
+                    ${cpButtonPicker('', item.vertical ?? 'bottom', this._verticalOptions, e => this._itemChanged(zone, index, 'vertical', e))}
+                    ${cpButtonPicker('', item.position ?? zone,     this._positionOptions, e => this._itemChanged(zone, index, 'position', e))}
                   </div>
 
                   <!-- Entity ID or Template string -->
@@ -939,6 +962,15 @@ class ChronoPictureCardEditor extends LitElement {
       margin-bottom: 8px;
     }
 
+    .item-position-row {
+      display: flex;
+      flex-direction: row;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 8px;
+      margin-top: 4px;
+    }
+
     .item-content-row {
       display: grid;
       grid-template-columns: 1fr;
@@ -957,7 +989,7 @@ class ChronoPictureCardEditor extends LitElement {
 
     .item-typography {
       display: grid;
-      grid-template-columns: 11fr 4fr 4fr 4fr 4fr;
+      grid-template-columns: 19fr 8fr 8fr 8fr 8fr;
       gap: 8px;
       align-items: end;
       margin-bottom: 8px;
@@ -965,7 +997,7 @@ class ChronoPictureCardEditor extends LitElement {
 
     .item-bg-color-padding {
       display: grid;
-      grid-template-columns: 11fr 4fr 4fr 4fr 4fr;
+      grid-template-columns: 19fr 8fr 8fr 8fr 8fr;
       gap: 8px;
       align-items: end;
       margin-bottom: 8px;
@@ -1181,9 +1213,10 @@ class ChronoPictureCardEditor extends LitElement {
           </div>
         ` : ''}
 
-        <!-- Bar background color + aspect ratio on one row (item 3), labels cleaned (items 4, 5) -->
-        <div class="image-source">
-          ${cpColorPicker('Bar background color', c.bar_background_color ?? '', e => this._valueChanged('bar_background_color', e))}
+        <!-- Bar background colors + aspect ratio -->
+        <div class="image-display">
+          ${cpColorPicker('Bottom bar color', c.bottom_bar_background_color ?? '', e => this._valueChanged('bottom_bar_background_color', e))}
+          ${cpColorPicker('Top bar color', c.top_bar_background_color ?? '', e => this._valueChanged('top_bar_background_color', e))}
           ${cpTextField('Aspect ratio', c.aspect_ratio ?? '', e => this._valueChanged('aspect_ratio', e))}
         </div>
 
@@ -1229,7 +1262,8 @@ class ChronoPictureCard extends LitElement {
     return {
       ...DEFAULT_CONFIG,
       image: 'https://demo.home-assistant.io/stub_config/kitchen.png',
-      bar_background_color: '#0000004D',
+      bottom_bar_background_color: '#0000004D',
+      top_bar_background_color: '',
       left_items:   [{ template: 'My Camera', font_color: 'white', font_size: 1.1, font_weight: 600 }],
       center_items: [],
       right_items:  [],
@@ -1433,8 +1467,9 @@ class ChronoPictureCard extends LitElement {
   }
 
   // ── Render a bar zone ─────────────────────────────────────────────────────
-  _renderZone(zone) {
-    const items = this._config?.[`${zone}_items`] ?? [];
+  _renderZone(zone, vertical) {
+    const allItems = this._config?.[`${zone}_items`] ?? [];
+    const items    = allItems.filter(item => (item.vertical ?? 'bottom') === vertical);
     return html`
       <div class="bar-zone bar-zone-${zone}">
         ${items.map((item, index) => this._renderItem(item, zone, index))}
@@ -1483,7 +1518,6 @@ class ChronoPictureCard extends LitElement {
       position: absolute;
       left: 0;
       right: 0;
-      bottom: 0;
       padding: 4px 8px;
       display: flex;
       flex-direction: row;
@@ -1491,6 +1525,8 @@ class ChronoPictureCard extends LitElement {
       align-items: center;
       box-sizing: border-box;
     }
+    .bar-bottom { bottom: 0; }
+    .bar-top    { top: 0;    }
     .bar-zone {
       display: flex;
       flex-direction: row;
@@ -1610,8 +1646,12 @@ class ChronoPictureCard extends LitElement {
           }
         </div>
 
-        <div class="bar" style=${styleMap({'background-color': c.bar_background_color || undefined})}>
-          ${ZONE_KEYS.map(zone => this._renderZone(zone))}
+        <div class="bar bar-top" style=${styleMap({'background-color': c.top_bar_background_color || undefined})}>
+          ${ZONE_KEYS.map(zone => this._renderZone(zone, 'top'))}
+        </div>
+
+        <div class="bar bar-bottom" style=${styleMap({'background-color': c.bottom_bar_background_color || undefined})}>
+          ${ZONE_KEYS.map(zone => this._renderZone(zone, 'bottom'))}
         </div>
       </ha-card>
     `;
