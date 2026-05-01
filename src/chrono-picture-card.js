@@ -5,13 +5,14 @@ import { unsafeHTML }            from 'https://unpkg.com/lit@2.0.0/directives/un
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '0.1.22';
+const CARD_VERSION = '0.1.23';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
-// v0.1.22: Add input_select-popup action — built-in popup list from an
+// v0.1.23: Rename input_select-popup to input-select-popup
+// v0.1.22: Add input-select-popup action — built-in popup list from an
 //          input_select entity; on_select fires after option chosen with
 //          display value injected into service data
 // v0.1.21: Remove unauthorized position property and button group
@@ -1394,7 +1395,7 @@ class ChronoPictureCard extends LitElement {
       case 'url':
         if (action.url_path) window.open(action.url_path, '_blank');
         break;
-      case 'input_select-popup': {
+      case 'input-select-popup': {
         const popupEntity = action.entity;
         if (!popupEntity) break;
         const stateObj = this._hass.states[popupEntity];
