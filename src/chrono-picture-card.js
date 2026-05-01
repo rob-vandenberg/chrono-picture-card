@@ -5,12 +5,15 @@ import { unsafeHTML }            from 'https://unpkg.com/lit@2.0.0/directives/un
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '0.1.21';
+const CARD_VERSION = '0.1.22';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v0.1.22: Add input_select-popup action — built-in popup list from an
+//          input_select entity; on_select fires after option chosen with
+//          display value injected into service data
 // v0.1.21: Remove unauthorized position property and button group
 // v0.1.20: Add vertical (top/bottom) property per item; add top bar with
 //          top_bar_background_color; rename bar_background_color to
@@ -1242,6 +1245,7 @@ class ChronoPictureCard extends LitElement {
   static properties = {
     _config:     { attribute: false },
     _itemValues: { state: true },
+    _popup:      { state: true },
   };
 
   static getCardSize() {
@@ -1270,6 +1274,7 @@ class ChronoPictureCard extends LitElement {
     this._hass            = null;
     this._itemValues      = {};
     this._templateUnsubs  = [];
+    this._popup           = null;
   }
 
   set hass(hass) {
@@ -1389,8 +1394,42 @@ class ChronoPictureCard extends LitElement {
       case 'url':
         if (action.url_path) window.open(action.url_path, '_blank');
         break;
+      case 'input_select-popup': {
+        const popupEntity = action.entity;
+        if (!popupEntity) break;
+        const stateObj = this._hass.states[popupEntity];
+        if (!stateObj) break;
+        this._popup = {
+          entity:    popupEntity,
+          options:   stateObj.attributes.options ?? [],
+          current:   stateObj.state,
+          on_select: action.on_select ?? null,
+        };
+        break;
+      }
       default:
         break;
+    }
+  }
+
+  // ── Popup option selected ─────────────────────────────────────────────────
+  _selectPopupOption(option) {
+    const popup = this._popup;
+    this._popup  = null;
+
+    // Set the input_select to the chosen option
+    this._hass.callService('input_select', 'select_option', {
+      entity_id: popup.entity,
+      option,
+    });
+
+    // Fire the on_select action if defined, injecting the chosen option
+    if (popup.on_select) {
+      const action = { ...popup.on_select };
+      if (action.data) {
+        action.data = { ...action.data, display: option };
+      }
+      this._fireAction(null, action);
     }
   }
 
@@ -1569,6 +1608,58 @@ class ChronoPictureCard extends LitElement {
       color: var(--error-color, #f44336);
       font-weight: bold;
       padding: 0 4px;
+    }
+
+    /* ── input_select popup ─────────────────────────────────────────────────── */
+    .popup-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.5);
+      cursor: pointer;
+    }
+    .popup-panel {
+      background: var(--card-background-color, #1c1c1c);
+      border-radius: 12px;
+      padding: 8px 0;
+      min-width: 180px;
+      max-width: 80%;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+      cursor: default;
+    }
+    .popup-option {
+      display: flex;
+      align-items: center;
+      padding: 12px 20px;
+      font-size: 14px;
+      color: var(--primary-text-color);
+      cursor: pointer;
+      transition: background 0.1s;
+      gap: 10px;
+    }
+    .popup-option:hover {
+      background: var(--secondary-background-color, rgba(255,255,255,0.08));
+    }
+    .popup-option.selected {
+      color: var(--primary-color);
+      font-weight: 600;
+    }
+    .popup-option-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--primary-color);
+      flex-shrink: 0;
+      opacity: 0;
+    }
+    .popup-option.selected .popup-option-dot {
+      opacity: 1;
     }
   `;
 
