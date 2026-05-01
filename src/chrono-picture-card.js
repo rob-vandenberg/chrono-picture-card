@@ -5,12 +5,13 @@ import { unsafeHTML }            from 'https://unpkg.com/lit@2.0.0/directives/un
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '0.1.20';
+const CARD_VERSION = '0.1.21';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v0.1.21: Remove unauthorized position property and button group
 // v0.1.20: Add vertical (top/bottom) property per item; add top bar with
 //          top_bar_background_color; rename bar_background_color to
 //          bottom_bar_background_color; update item-typography and
@@ -92,7 +93,7 @@ const NUMERIC_ITEM_KEYS = new Set([
 // Keys managed by dedicated UI fields. All other keys go into the YAML textarea.
 const UI_ITEM_KEYS = new Set([
   'entity', 'template',
-  'vertical', 'position',
+  'vertical',
   'icon', 'show_state',
   'font_color', 'font_size', 'font_weight', 'line_height', 'border_radius',
   'background_color',
@@ -767,12 +768,6 @@ class ChronoPictureCardEditor extends LitElement {
     { label: 'Top',    value: 'top'    },
   ];
 
-  _positionOptions = [
-    { label: 'Left',   value: 'left'   },
-    { label: 'Center', value: 'center' },
-    { label: 'Right',  value: 'right'  },
-  ];
-
   _imageSourceTypeOptions = [
     { label: 'Camera',      value: 'camera'   },
     { label: 'Image URL',   value: 'url'      },
@@ -835,10 +830,9 @@ class ChronoPictureCardEditor extends LitElement {
                     <ha-svg-icon .path=${mdiDragHorizontalVariant}></ha-svg-icon>
                   </div>
 
-                  <!-- Vertical + position button groups -->
+                  <!-- Vertical (top/bottom) button group -->
                   <div class="item-position-row">
                     ${cpButtonPicker('', item.vertical ?? 'bottom', this._verticalOptions, e => this._itemChanged(zone, index, 'vertical', e))}
-                    ${cpButtonPicker('', item.position ?? zone,     this._positionOptions, e => this._itemChanged(zone, index, 'position', e))}
                   </div>
 
                   <!-- Entity ID or Template string -->
