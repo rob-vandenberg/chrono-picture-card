@@ -6,12 +6,22 @@ import { repeat }                from 'https://unpkg.com/lit@2.0.0/directives/re
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '0.4.43';
+const CARD_VERSION = '0.4.44';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v0.4.44: Fix subscription teardown — Promise.resolve the subscribeMessage
+//          return so template subscriptions actually unsubscribe (was leaking);
+//          render honors image_source_type via derived useCamera flag instead
+//          of branching on camera_image presence; seed generateId() with
+//          existing + in-progress ids during _id migration (both setConfig
+//          paths) so the uniqueness guard runs; remove ineffective color-input
+//          @change handler; add _subscribed flag so setup no longer re-runs on
+//          every hass update for template-less cards; build item→index Map in
+//          _renderZone (was O(n^2) indexOf); early-return in
+//          _resolveDataTemplates when no values contain templates
 // v0.4.43: Fix domainIcon() — move map construction to module level; add
 //          console.warn for unresolved {{ }} in _resolveDataTemplates; guard
 //          _selectPopupOption after await against lost hass; remove dead CSS
@@ -377,8 +387,7 @@ function cpColorPicker(label, value, onChange) {
     <div class="text-field">
       <label>${unsafeHTML(label)}</label>
       <div class="color-picker-row">
-        <input type="color" .value=${swatchValue} @input=${onChange}
-          @change=${(e) => { if (e.target.value !== '#000000') onChange(e); }}>
+        <input type="color" .value=${swatchValue} @input=${onChange}>
         <chrono-cp-textfield
           .value=${String(value ?? '')}
           @input=${onChange}
@@ -817,7 +826,9 @@ class ChronoPictureCardEditor extends LitElement {
     }
     // Assign _id to any item missing one
     if (config.items?.some(i => !i._id)) {
-      config = { ...config, items: config.items.map(i => i._id ? i : { ...i, _id: generateId() }) };
+      const withIds = [];
+      for (const i of config.items) withIds.push(i._id ? i : { ...i, _id: generateId(config.items.concat(withIds)) });
+      config = { ...config, items: withIds };
     }
     this._config = config;
   }
@@ -1486,6 +1497,7 @@ class ChronoPictureCard extends LitElement {
     this._hass            = null;
     this._itemValues      = {};
     this._templateUnsubs  = [];
+    this._subscribed      = false;
     this._popup           = null;
   }
 
@@ -1493,7 +1505,7 @@ class ChronoPictureCard extends LitElement {
     const prevConnection = this._hass?.connection;
     this._hass = hass;
     if (this._config) {
-      if (hass.connection !== prevConnection || this._templateUnsubs.length === 0) {
+      if (hass.connection !== prevConnection || !this._subscribed) {
         this._setupSubscriptions();
       }
     }
@@ -1517,10 +1529,12 @@ class ChronoPictureCard extends LitElement {
     }
     // Assign _id to any item missing one
     if (config.items?.some(i => !i._id)) {
-      config = { ...config, items: config.items.map(i => i._id ? i : { ...i, _id: generateId() }) };
+      const withIds = [];
+      for (const i of config.items) withIds.push(i._id ? i : { ...i, _id: generateId(config.items.concat(withIds)) });
+      config = { ...config, items: withIds };
     }
 
-    let needsResubscribe = this._templateUnsubs.length === 0;
+    let needsResubscribe = !this._subscribed;
 
     if (!needsResubscribe && this._config) {
       const oldItems = this._config.items ?? [];
@@ -1543,7 +1557,7 @@ class ChronoPictureCard extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
-    if (this._hass && this._config && this._templateUnsubs.length === 0) {
+    if (this._hass && this._config && !this._subscribed) {
       this._setupSubscriptions();
     }
   }
@@ -1578,17 +1592,17 @@ class ChronoPictureCard extends LitElement {
         });
       }
     });
+    this._subscribed = true;
   }
 
   _teardownSubscriptions() {
     this._templateUnsubs.forEach(unsub => {
-      if (typeof unsub !== 'function') return;
-      try {
-        const result = unsub();
-        if (result && typeof result.catch === 'function') result.catch(() => {});
-      } catch (e) {}
+      Promise.resolve(unsub)
+        .then(fn => { if (typeof fn === 'function') fn(); })
+        .catch(() => {});
     });
     this._templateUnsubs = [];
+    this._subscribed     = false;
   }
 
   // ── Action handling ───────────────────────────────────────────────────────
@@ -1641,8 +1655,10 @@ class ChronoPictureCard extends LitElement {
 
   // ── Resolve {{ }} templates in data values (client-side approximation) ─────
   _resolveDataTemplates(data) {
+    const entries = Object.entries(data);
+    if (!entries.some(([, v]) => typeof v === 'string' && v.includes('{{'))) return data;
     const resolved = {};
-    for (const [key, val] of Object.entries(data)) {
+    for (const [key, val] of entries) {
       if (typeof val === 'string' && val.includes('{{')) {
         // Replace {{ states('entity') }} with current state value
         resolved[key] = val.replace(/\{\{\s*states\(\s*['"](.*?)['"]\s*\)\s*\}\}/g, (_, entityId) => {
@@ -1798,16 +1814,14 @@ class ChronoPictureCard extends LitElement {
   // ── Render a bar zone ─────────────────────────────────────────────────────
   _renderZone(horizontal, vertical) {
     const allItems = this._config?.items ?? [];
+    const indexOf  = new Map(allItems.map((it, i) => [it, i]));
     const items    = allItems.filter(item =>
       (item.horizontal ?? 'center') === horizontal &&
       (item.vertical   ?? 'bottom') === vertical
     );
     return html`
       <div class="bar-zone bar-zone-${horizontal}">
-        ${items.map((item, index) => {
-          const globalIndex = allItems.indexOf(item);
-          return this._renderItem(item, globalIndex);
-        })}
+        ${items.map(item => this._renderItem(item, indexOf.get(item)))}
       </div>
     `;
   }
@@ -1972,6 +1986,8 @@ class ChronoPictureCard extends LitElement {
     const aspectPadding = parseAspectRatio(c.aspect_ratio);
     const fitMode       = c.fit_mode        || 'fill';
     const objPosition   = c.object_position || 'center';
+    const sourceType    = c.image_source_type ?? (c.camera_image ? 'camera' : (c.image_entity ? 'entity' : 'url'));
+    const useCamera     = sourceType === 'camera' && !!c.camera_image;
 
     // Resolve image URL
     let imageUrl = c.image || '';
@@ -1997,11 +2013,11 @@ class ChronoPictureCard extends LitElement {
     // For static image path: use the padding-bottom trick on the container.
     const containerClass = [
       'image-container',
-      !c.camera_image && aspectPadding ? 'has-ratio' : '',
+      !useCamera && aspectPadding ? 'has-ratio' : '',
       isClickable ? 'clickable' : '',
     ].filter(Boolean).join(' ');
 
-    const containerStyle = (!c.camera_image && aspectPadding)
+    const containerStyle = (!useCamera && aspectPadding)
       ? `padding-bottom: ${aspectPadding};`
       : '';
 
@@ -2012,7 +2028,7 @@ class ChronoPictureCard extends LitElement {
           style="${containerStyle}"
           @click=${() => this._fireAction(c.entity, c.tap_action)}
         >
-          ${c.camera_image
+          ${useCamera
             ? html`
                 <hui-image
                   .hass=${this._hass}
