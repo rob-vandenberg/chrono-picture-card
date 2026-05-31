@@ -5,12 +5,15 @@ import { unsafeHTML }            from 'https://unpkg.com/lit@2.0.0/directives/un
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '0.3.34';
+const CARD_VERSION = '0.3.35';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v0.3.35: Fix sort order — extract sortItems() as module-level function so
+//          migration in setConfig() also sorts; fixes items not sorted after
+//          loading old configs
 // v0.3.34: Add T/B and L/C/R position badges in item header with color coding;
 //          add _sortItems() — auto-sort items by group (TL/TC/TR/BL/BC/BR)
 //          on add, reorder, and position property change
@@ -220,6 +223,16 @@ const HORIZONTAL_BADGE_COLORS = {
   center: '#10a800',
   right:  '#00a896',
 };
+
+// ─── sortItems ────────────────────────────────────────────────────────────────
+const _GROUP_ORDER = [
+  'top-left', 'top-center', 'top-right',
+  'bottom-left', 'bottom-center', 'bottom-right',
+];
+function sortItems(items) {
+  const key = item => `${item.vertical ?? 'bottom'}-${item.horizontal ?? 'center'}`;
+  return [...items].sort((a, b) => _GROUP_ORDER.indexOf(key(a)) - _GROUP_ORDER.indexOf(key(b)));
+}
 
 // ─── YAML helpers ─────────────────────────────────────────────────────────────
 function serializeExtrasToYaml(obj, uiKeys) {
@@ -766,11 +779,11 @@ class ChronoPictureCardEditor extends LitElement {
   setConfig(config) {
     // Migrate old left_items/center_items/right_items to single items array
     if (config.left_items || config.center_items || config.right_items) {
-      const migrated = [
+      const migrated = sortItems([
         ...(config.left_items   ?? []).map(i => ({ ...i, horizontal: 'left'   })),
         ...(config.center_items ?? []).map(i => ({ ...i, horizontal: 'center' })),
         ...(config.right_items  ?? []).map(i => ({ ...i, horizontal: 'right'  })),
-      ];
+      ]);
       const { left_items, center_items, right_items, ...rest } = config;
       config = { ...rest, items: migrated };
     }
@@ -855,15 +868,8 @@ class ChronoPictureCardEditor extends LitElement {
     this._fireConfig();
   }
 
-  // ── Sort items by group (TL, TC, TR, BL, BC, BR), preserving intra-group order
-  _sortItems(items) {
-    const groupOrder = [
-      'top-left', 'top-center', 'top-right',
-      'bottom-left', 'bottom-center', 'bottom-right',
-    ];
-    const key = item => `${item.vertical ?? 'bottom'}-${item.horizontal ?? 'center'}`;
-    return [...items].sort((a, b) => groupOrder.indexOf(key(a)) - groupOrder.indexOf(key(b)));
-  }
+  // ── Sort items by group — delegates to module-level sortItems()
+  _sortItems(items) { return sortItems(items); }
 
   // ── Add / remove / reorder items ──────────────────────────────────────────
   _addItem(type) {
@@ -1402,11 +1408,11 @@ class ChronoPictureCard extends LitElement {
   setConfig(config) {
     // Migrate old left_items/center_items/right_items to single items array
     if (config.left_items || config.center_items || config.right_items) {
-      const migrated = [
+      const migrated = sortItems([
         ...(config.left_items   ?? []).map(i => ({ ...i, horizontal: 'left'   })),
         ...(config.center_items ?? []).map(i => ({ ...i, horizontal: 'center' })),
         ...(config.right_items  ?? []).map(i => ({ ...i, horizontal: 'right'  })),
-      ];
+      ]);
       const { left_items, center_items, right_items, ...rest } = config;
       config = { ...rest, items: migrated };
     }
