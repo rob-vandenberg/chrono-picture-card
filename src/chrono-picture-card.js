@@ -6,12 +6,21 @@ import { repeat }                from 'https://unpkg.com/lit@2.0.0/directives/re
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '0.3.42.1';
+const CARD_VERSION = '0.4.43';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v0.4.43: Fix domainIcon() — move map construction to module level; add
+//          console.warn for unresolved {{ }} in _resolveDataTemplates; guard
+//          _selectPopupOption after await against lost hass; remove dead CSS
+//          classes actions-row and nav-path-row; remove _sortItems() wrapper,
+//          call sortItems() directly; fix fit_mode fallback in render() from
+//          'cover' to 'fill'; fix cpParseNumber trailing-zero suppression;
+//          add uniqueness check to generateId(); move inline header slot
+//          styles to CSS classes; replace contenteditable CpTextarea with
+//          native textarea
 // v0.3.42: Add GROUP_DIVIDER_COLOR const; apply to divider label and line
 // v0.3.41: Reorder VERTICAL_OPTIONS to Top|Bottom (default remains bottom)
 // v0.3.40: Increase button group margin-top and margin-bottom from 2px to 6px
@@ -148,10 +157,10 @@ const DEFAULT_ITEM = {
   line_height:      1.2,
   border_radius:    50,
   background_color: '',
-  padding_top:      12,
-  padding_bottom:   12,
-  padding_left:     12,
-  padding_right:    12,
+  padding_top:      10,
+  padding_bottom:   10,
+  padding_left:     10,
+  padding_right:    10,
 };
 
 const DEFAULT_ENTITY_ITEM   = { ...DEFAULT_ITEM, entity:   '' };
@@ -257,8 +266,11 @@ function sortItems(items) {
 }
 
 // ─── generateId ───────────────────────────────────────────────────────────────
-function generateId() {
-  return Math.random().toString(16).slice(2, 10);
+function generateId(existingItems = []) {
+  const existing = new Set(existingItems.map(i => i._id));
+  let id;
+  do { id = Math.random().toString(16).slice(2, 10); } while (existing.has(id));
+  return id;
 }
 
 // ─── YAML helpers ─────────────────────────────────────────────────────────────
@@ -302,13 +314,15 @@ function isStateActive(stateObj) {
   return ACTIVE_STATES.includes(s);
 }
 
+const DOMAIN_ICON_MAP_EXTENDED = {
+  ...DOMAIN_ICON_MAP,
+  binary_sensor: 'mdi:radiobox-blank', // device_class override applied inline below
+};
+
 function domainIcon(domain, stateObj) {
-  const dc  = stateObj?.attributes?.device_class;
-  const map = {
-    ...DOMAIN_ICON_MAP,
-    binary_sensor: dc ? `mdi:${dc}` : 'mdi:radiobox-blank',
-  };
-  return stateObj?.attributes?.icon ?? map[domain] ?? DEFAULT_ENTITY_ICON;
+  const dc   = stateObj?.attributes?.device_class;
+  const icon = (domain === 'binary_sensor' && dc) ? `mdi:${dc}` : DOMAIN_ICON_MAP_EXTENDED[domain];
+  return stateObj?.attributes?.icon ?? icon ?? DEFAULT_ENTITY_ICON;
 }
 
 // ─── Aspect ratio helper ──────────────────────────────────────────────────────
@@ -325,7 +339,6 @@ function parseAspectRatio(ratio) {
 function cpParseNumber(raw) {
   const v = String(raw).replace(',', '.');
   if (v === '-' || v === '-0' || v.endsWith('.')) return null;
-  if (v.includes('.') && v.endsWith('0'))         return null;
   if (v === '')                                    return '';
   const n = parseFloat(v);
   return isNaN(n) ? null : n;
@@ -471,7 +484,7 @@ class CpTextarea extends LitElement {
       display: block;
       width: 100%;
     }
-    .editor {
+    textarea {
       display: block;
       width: 100%;
       box-sizing: border-box;
@@ -492,39 +505,25 @@ class CpTextarea extends LitElement {
       word-wrap: break-word;
       transition: border-bottom-color 0.2s;
     }
-    .editor:focus {
+    textarea:focus {
       border-bottom: 2px solid var(--primary-color);
     }
-    .editor.error {
+    textarea.error {
       border-bottom: 2px solid var(--error-color, #f44336);
-    }
-    .editor:empty:before {
-      content: attr(data-placeholder);
-      color: var(--secondary-text-color);
-      pointer-events: none;
     }
   `;
 
-  updated(changedProps) {
-    if (changedProps.has('value')) {
-      const el = this.shadowRoot.querySelector('.editor');
-      if (el && el !== document.activeElement && el.innerText !== this.value) {
-        el.innerText = this.value ?? '';
-      }
-    }
-  }
-
   render() {
     return html`
-      <div
-        class="editor${this.error ? ' error' : ''}"
-        contenteditable="true"
-        data-placeholder=${this.placeholder ?? ''}
+      <textarea
+        class="${this.error ? 'error' : ''}"
+        .value=${live(this.value ?? '')}
+        placeholder=${this.placeholder ?? ''}
         @input=${e => {
-          this.value = e.target.innerText;
+          this.value = e.target.value;
           this.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
         }}
-      ></div>
+      ></textarea>
     `;
   }
 }
@@ -869,7 +868,7 @@ class ChronoPictureCardEditor extends LitElement {
     }
     let items    = [...(this._config.items ?? [])];
     items[index] = { ...items[index], [key]: value };
-    if (key === 'horizontal' || key === 'vertical') items = this._sortItems(items);
+    if (key === 'horizontal' || key === 'vertical') items = sortItems(items);
     this._config = { ...this._config, items };
     this._fireConfig();
   }
@@ -901,15 +900,13 @@ class ChronoPictureCardEditor extends LitElement {
     this._fireConfig();
   }
 
-  // ── Sort items by group — delegates to module-level sortItems()
-  _sortItems(items) { return sortItems(items); }
-
   // ── Add / remove / reorder items ──────────────────────────────────────────
   _addItem(type) {
+    const existing = this._config.items ?? [];
     const base   = type === 'entity'
-      ? { ...DEFAULT_ENTITY_ITEM,   _id: generateId() }
-      : { ...DEFAULT_TEMPLATE_ITEM, _id: generateId() };
-    const items  = this._sortItems([...(this._config.items ?? []), base]);
+      ? { ...DEFAULT_ENTITY_ITEM,   _id: generateId(existing) }
+      : { ...DEFAULT_TEMPLATE_ITEM, _id: generateId(existing) };
+    const items  = sortItems([...existing, base]);
     this._config = { ...this._config, items };
     this._fireConfig();
   }
@@ -925,7 +922,7 @@ class ChronoPictureCardEditor extends LitElement {
     const { oldIndex, newIndex } = e.detail;
     const items  = [...(this._config.items ?? [])];
     items.splice(newIndex, 0, items.splice(oldIndex, 1)[0]);
-    this._config = { ...this._config, items: this._sortItems(items) };
+    this._config = { ...this._config, items: sortItems(items) };
     this._fireConfig();
   }
 
@@ -979,8 +976,8 @@ class ChronoPictureCardEditor extends LitElement {
 
                 <ha-expansion-panel outlined>
 
-                  <div slot="header" style="display:flex;align-items:center;gap:6px;width:100%;">
-                    <div style="display:flex;align-items:center;gap:6px;flex:1;${item.show === false ? 'opacity:0.45;' : ''}">
+                  <div slot="header" class="item-header-slot">
+                    <div class="item-header-content${item.show === false ? ' item-hidden' : ''}">
                       ${SHOW_ITEM_POSITION_BADGES ? html`
                         <span class="item-pos-badge" style="background:${VERTICAL_BADGE_COLORS[item.vertical ?? 'bottom']}">${(item.vertical ?? 'bottom') === 'top' ? 'T' : 'B'}</span>
                         <span class="item-pos-badge" style="background:${HORIZONTAL_BADGE_COLORS[item.horizontal ?? 'center']}">${{ left: 'L', center: 'C', right: 'R' }[item.horizontal ?? 'center']}</span>
@@ -1105,22 +1102,6 @@ class ChronoPictureCardEditor extends LitElement {
     }
 
     .image-ratio {
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 8px;
-      align-items: end;
-      margin-bottom: 8px;
-    }
-
-    .actions-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
-      gap: 8px;
-      align-items: end;
-      margin-bottom: 8px;
-    }
-
-    .nav-path-row {
       display: grid;
       grid-template-columns: 1fr;
       gap: 8px;
@@ -1297,6 +1278,24 @@ class ChronoPictureCardEditor extends LitElement {
     }
 
     /* ── Item type badge ───────────────────────────────────────────────────── */
+
+    .item-header-slot {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      width: 100%;
+    }
+
+    .item-header-content {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex: 1;
+    }
+
+    .item-header-content.item-hidden {
+      opacity: 0.45;
+    }
 
     .group-divider {
       display: flex;
@@ -1649,6 +1648,9 @@ class ChronoPictureCard extends LitElement {
         resolved[key] = val.replace(/\{\{\s*states\(\s*['"](.*?)['"]\s*\)\s*\}\}/g, (_, entityId) => {
           return this._hass.states[entityId]?.state ?? '';
         });
+        if (typeof resolved[key] === 'string' && resolved[key].includes('{{')) {
+          console.warn(`chrono-picture-card: unresolved template in data key "${key}": ${resolved[key]}`);
+        }
       } else {
         resolved[key] = val;
       }
@@ -1722,6 +1724,7 @@ class ChronoPictureCard extends LitElement {
       });
     }
 
+    if (!this._hass) return;
     this._fireAction(null, action);
   }
 
@@ -1967,7 +1970,7 @@ class ChronoPictureCard extends LitElement {
 
     const c             = this._config;
     const aspectPadding = parseAspectRatio(c.aspect_ratio);
-    const fitMode       = c.fit_mode        || 'cover';
+    const fitMode       = c.fit_mode        || 'fill';
     const objPosition   = c.object_position || 'center';
 
     // Resolve image URL
