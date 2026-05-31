@@ -6,12 +6,19 @@ import { repeat }                from 'https://unpkg.com/lit@2.0.0/directives/re
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '0.4.44';
+const CARD_VERSION = '0.4.45';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v0.4.45: Resolve call-service data templates server-side via render_template
+//          (subscribeMessage) so any valid Jinja2 is supported, not just
+//          states(); _resolveDataTemplates is now async and removes the regex
+//          and console.warn; call-service branch fires the service after the
+//          resolve; _selectPopupOption now routes through _resolveDataTemplates
+//          instead of its own inline block (single source of truth), preserving
+//          the select_option-before-resolve ordering
 // v0.4.44: Fix subscription teardown — Promise.resolve the subscribeMessage
 //          return so template subscriptions actually unsubscribe (was leaking);
 //          render honors image_source_type via derived useCamera flag instead
@@ -1626,9 +1633,10 @@ class ChronoPictureCard extends LitElement {
       case 'call-service': {
         const [domain, service] = (action.service || '').split('.');
         if (domain && service) {
-          // Resolve any {{ }} Jinja2 templates in data values client-side
-          const resolvedData = this._resolveDataTemplates(action.data || {});
-          this._hass.callService(domain, service, resolvedData);
+          // Resolve any Jinja2 templates in data values server-side, then call
+          this._resolveDataTemplates(action.data || {}).then(resolvedData => {
+            this._hass.callService(domain, service, resolvedData);
+          });
         }
         break;
       }
@@ -1653,24 +1661,31 @@ class ChronoPictureCard extends LitElement {
     }
   }
 
-  // ── Resolve {{ }} templates in data values (client-side approximation) ─────
-  _resolveDataTemplates(data) {
-    const entries = Object.entries(data);
-    if (!entries.some(([, v]) => typeof v === 'string' && v.includes('{{'))) return data;
+  // ── Resolve {{ }} templates in data values via server-side render_template ──
+  async _resolveDataTemplates(data) {
+    const entries      = Object.entries(data);
+    const templateKeys = entries.filter(([, v]) => typeof v === 'string' && v.includes('{{'));
+    if (!templateKeys.length) return data;
+
     const resolved = {};
     for (const [key, val] of entries) {
-      if (typeof val === 'string' && val.includes('{{')) {
-        // Replace {{ states('entity') }} with current state value
-        resolved[key] = val.replace(/\{\{\s*states\(\s*['"](.*?)['"]\s*\)\s*\}\}/g, (_, entityId) => {
-          return this._hass.states[entityId]?.state ?? '';
-        });
-        if (typeof resolved[key] === 'string' && resolved[key].includes('{{')) {
-          console.warn(`chrono-picture-card: unresolved template in data key "${key}": ${resolved[key]}`);
-        }
-      } else {
-        resolved[key] = val;
-      }
+      if (!(typeof val === 'string' && val.includes('{{'))) resolved[key] = val;
     }
+
+    // Resolve each template key server-side (one-shot subscribeMessage)
+    await Promise.all(templateKeys.map(([key, tmpl]) =>
+      new Promise((resolve) => {
+        const unsubPromise = this._hass.connection.subscribeMessage(
+          (msg) => {
+            resolved[key] = msg.result;
+            unsubPromise.then(fn => fn());
+            resolve();
+          },
+          { type: 'render_template', template: tmpl }
+        );
+      })
+    ));
+
     return resolved;
   }
 
@@ -1694,44 +1709,14 @@ class ChronoPictureCard extends LitElement {
     const action = { ...popup.on_select };
 
     if (action.data) {
-      // Resolve any {{ }} templates in data values using subscribeMessage —
-      // the same mechanism used by template bar items, proven to work.
-      // We fire select_option first (no await), then immediately subscribe
-      // to render_template. WebSocket sequential processing guarantees
-      // render_template runs after select_option on the server.
+      // Fire select_option first (no await), then resolve templates server-side.
+      // WebSocket sequential processing guarantees render_template runs after
+      // the state update, so templates see the newly selected option.
       this._hass.callService('input_select', 'select_option', {
         entity_id: popup.entity,
         option,
       });
-
-      const resolvedData = {};
-      const templateKeys = Object.entries(action.data).filter(
-        ([, val]) => typeof val === 'string' && val.includes('{{')
-      );
-      const plainKeys = Object.entries(action.data).filter(
-        ([, val]) => !(typeof val === 'string' && val.includes('{{'))
-      );
-
-      // Copy plain values directly
-      for (const [key, val] of plainKeys) {
-        resolvedData[key] = val;
-      }
-
-      // Resolve each template key using subscribeMessage (one-shot)
-      await Promise.all(templateKeys.map(([key, tmpl]) =>
-        new Promise((resolve) => {
-          const unsubPromise = this._hass.connection.subscribeMessage(
-            (msg) => {
-              resolvedData[key] = msg.result;
-              unsubPromise.then(fn => fn());
-              resolve();
-            },
-            { type: 'render_template', template: tmpl }
-          );
-        })
-      ));
-
-      action.data = resolvedData;
+      action.data = await this._resolveDataTemplates(action.data);
     } else {
       // No data — just set input_select then fire action
       this._hass.callService('input_select', 'select_option', {
