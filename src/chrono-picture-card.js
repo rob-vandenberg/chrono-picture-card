@@ -5,12 +5,15 @@ import { unsafeHTML }            from 'https://unpkg.com/lit@2.0.0/directives/un
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '0.3.33';
+const CARD_VERSION = '0.3.34';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v0.3.34: Add T/B and L/C/R position badges in item header with color coding;
+//          add _sortItems() — auto-sort items by group (TL/TC/TR/BL/BC/BR)
+//          on add, reorder, and position property change
 // v0.3.33: Replace left_items/center_items/right_items with single items array;
 //          add horizontal property (left/center/right) per item alongside
 //          existing vertical (top/bottom); merge three zone editor panels into
@@ -206,6 +209,17 @@ const OBJECT_POSITION_OPTIONS = [
   { label: 'Left',   value: 'left'   },
   { label: 'Right',  value: 'right'  },
 ];
+
+const VERTICAL_BADGE_COLORS = {
+  top:    '#ac00ac',
+  bottom: '#0600ff',
+};
+
+const HORIZONTAL_BADGE_COLORS = {
+  left:   '#bb9e00',
+  center: '#10a800',
+  right:  '#00a896',
+};
 
 // ─── YAML helpers ─────────────────────────────────────────────────────────────
 function serializeExtrasToYaml(obj, uiKeys) {
@@ -807,9 +821,10 @@ class ChronoPictureCardEditor extends LitElement {
     } else {
       value = raw;
     }
-    const items      = [...(this._config.items ?? [])];
-    items[index]     = { ...items[index], [key]: value };
-    this._config     = { ...this._config, items };
+    let items    = [...(this._config.items ?? [])];
+    items[index] = { ...items[index], [key]: value };
+    if (key === 'horizontal' || key === 'vertical') items = this._sortItems(items);
+    this._config = { ...this._config, items };
     this._fireConfig();
   }
 
@@ -840,10 +855,20 @@ class ChronoPictureCardEditor extends LitElement {
     this._fireConfig();
   }
 
+  // ── Sort items by group (TL, TC, TR, BL, BC, BR), preserving intra-group order
+  _sortItems(items) {
+    const groupOrder = [
+      'top-left', 'top-center', 'top-right',
+      'bottom-left', 'bottom-center', 'bottom-right',
+    ];
+    const key = item => `${item.vertical ?? 'bottom'}-${item.horizontal ?? 'center'}`;
+    return [...items].sort((a, b) => groupOrder.indexOf(key(a)) - groupOrder.indexOf(key(b)));
+  }
+
   // ── Add / remove / reorder items ──────────────────────────────────────────
   _addItem(type) {
     const base   = type === 'entity' ? { ...DEFAULT_ENTITY_ITEM } : { ...DEFAULT_TEMPLATE_ITEM };
-    const items  = [...(this._config.items ?? []), base];
+    const items  = this._sortItems([...(this._config.items ?? []), base]);
     this._config = { ...this._config, items };
     this._fireConfig();
   }
@@ -859,7 +884,7 @@ class ChronoPictureCardEditor extends LitElement {
     const { oldIndex, newIndex } = e.detail;
     const items  = [...(this._config.items ?? [])];
     items.splice(newIndex, 0, items.splice(oldIndex, 1)[0]);
-    this._config = { ...this._config, items };
+    this._config = { ...this._config, items: this._sortItems(items) };
     this._fireConfig();
   }
 
@@ -898,6 +923,8 @@ class ChronoPictureCardEditor extends LitElement {
                 <ha-expansion-panel outlined>
 
                   <div slot="header" style="display:flex;align-items:center;gap:6px;">
+                    <span class="item-pos-badge" style="background:${VERTICAL_BADGE_COLORS[item.vertical ?? 'bottom']}">${(item.vertical ?? 'bottom') === 'top' ? 'T' : 'B'}</span>
+                    <span class="item-pos-badge" style="background:${HORIZONTAL_BADGE_COLORS[item.horizontal ?? 'center']}">${{ left: 'L', center: 'C', right: 'R' }[item.horizontal ?? 'center']}</span>
                     <span class="item-type-badge ${typeClass}">${typeLabel}</span>
                     <span>${headerText}</span>
                   </div>
@@ -1202,6 +1229,16 @@ class ChronoPictureCardEditor extends LitElement {
     }
 
     /* ── Item type badge ───────────────────────────────────────────────────── */
+
+    .item-pos-badge {
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      padding: 2px 6px;
+      border-radius: 4px;
+      color: white;
+    }
 
     .item-type-badge {
       font-size: 10px;
