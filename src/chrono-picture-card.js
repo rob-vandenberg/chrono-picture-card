@@ -6,12 +6,15 @@ import { repeat }                from 'https://unpkg.com/lit@2.0.0/directives/re
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '0.4.45';
+const CARD_VERSION = '0.4.46';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v0.4.46: Fire config-changed after migration in editor setConfig so HA
+//          receives and stores the migrated items array immediately (was only
+//          updated in memory, leaving the YAML view showing the old arrays)
 // v0.4.45: Resolve call-service data templates server-side via render_template
 //          (subscribeMessage) so any valid Jinja2 is supported, not just
 //          states(); _resolveDataTemplates is now async and removes the regex
@@ -821,23 +824,28 @@ class ChronoPictureCardEditor extends LitElement {
   };
 
   setConfig(config) {
+    let migrated = false;
+
     // Migrate old left_items/center_items/right_items to single items array
     if (config.left_items || config.center_items || config.right_items) {
-      const migrated = sortItems([
+      const migrated_items = sortItems([
         ...(config.left_items   ?? []).map(i => ({ ...i, horizontal: 'left'   })),
         ...(config.center_items ?? []).map(i => ({ ...i, horizontal: 'center' })),
         ...(config.right_items  ?? []).map(i => ({ ...i, horizontal: 'right'  })),
       ]);
       const { left_items, center_items, right_items, ...rest } = config;
-      config = { ...rest, items: migrated };
+      config   = { ...rest, items: migrated_items };
+      migrated = true;
     }
     // Assign _id to any item missing one
     if (config.items?.some(i => !i._id)) {
       const withIds = [];
       for (const i of config.items) withIds.push(i._id ? i : { ...i, _id: generateId(config.items.concat(withIds)) });
-      config = { ...config, items: withIds };
+      config   = { ...config, items: withIds };
+      migrated = true;
     }
     this._config = config;
+    if (migrated) this._fireConfig();
   }
 
   // ── Fire config-changed ───────────────────────────────────────────────────
