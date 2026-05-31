@@ -5,12 +5,14 @@ import { unsafeHTML }            from 'https://unpkg.com/lit@2.0.0/directives/un
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '0.3.35';
+const CARD_VERSION = '0.3.36';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v0.3.36: Move aspect ratio to camera/fit mode row; rename bar color labels;
+//          swap top/bottom bar order; reduce button height to 32px with 2px margins
 // v0.3.35: Fix sort order — extract sortItems() as module-level function so
 //          migration in setConfig() also sorts; fixes items not sorted after
 //          loading old configs
@@ -516,7 +518,9 @@ class CpButtonToggleGroup extends LitElement {
     }
     button {
       min-width: 70px;
-      height: 36px;
+      height: 32px;
+      margin-top: 2px;
+      margin-bottom: 2px;
       padding: 0 12px;
       border: none;
       border-left: 1px solid var(--ha-color-border-neutral-quiet, #444);
@@ -1279,7 +1283,7 @@ class ChronoPictureCardEditor extends LitElement {
 
       <!-- ── Image / Camera ──────────────────────────────────────────────────────────────────── -->
 
-      <ha-expansion-panel header="Card configuration" outlined .expanded=${true}>
+      <ha-expansion-panel header="Card configuration" outlined .expanded=${false}>
 
         <!-- Source type selector -->
         <div class="image-ratio">
@@ -1291,10 +1295,11 @@ class ChronoPictureCardEditor extends LitElement {
           <div class="image-ratio">
             ${cpTextField('Camera entity', c.camera_image ?? '', e => this._valueChanged('camera_image', e))}
           </div>
-          <!-- Camera view + fit mode on one row (item 2) -->
-          <div class="image-source">
+          <!-- Camera view + fit mode + aspect ratio on one row -->
+          <div class="image-display">
             ${cpSelectField('Camera view', c.camera_view ?? 'live', this._cameraViewOptions, e => this._valueChanged('camera_view', e))}
             ${cpSelectField('Fit mode', c.fit_mode ?? 'fill', this._fitModeOptions, e => this._valueChanged('fit_mode', e))}
+            ${cpTextField('Aspect ratio', c.aspect_ratio ?? '', e => this._valueChanged('aspect_ratio', e))}
           </div>
         ` : ''}
 
@@ -1303,20 +1308,22 @@ class ChronoPictureCardEditor extends LitElement {
           <div class="image-ratio">
             ${cpTextField('Image URL', c.image ?? '', e => this._valueChanged('image', e))}
           </div>
-          <!-- Fit mode alone when not camera -->
-          <div class="image-ratio">
+          <!-- Fit mode + aspect ratio on one row -->
+          <div class="image-source">
             ${cpSelectField('Fit mode', c.fit_mode ?? 'fill', this._fitModeOptions, e => this._valueChanged('fit_mode', e))}
+            ${cpTextField('Aspect ratio', c.aspect_ratio ?? '', e => this._valueChanged('aspect_ratio', e))}
           </div>
         ` : ''}
 
-        <!-- Image entity — label on one line (item 6) -->
+        <!-- Image entity -->
         ${sourceType === 'entity' ? html`
           <div class="image-ratio">
             ${cpTextField('Image entity (image. or person.)', c.image_entity ?? '', e => this._valueChanged('image_entity', e))}
           </div>
-          <!-- Fit mode alone when not camera -->
-          <div class="image-ratio">
+          <!-- Fit mode + aspect ratio on one row -->
+          <div class="image-source">
             ${cpSelectField('Fit mode', c.fit_mode ?? 'fill', this._fitModeOptions, e => this._valueChanged('fit_mode', e))}
+            ${cpTextField('Aspect ratio', c.aspect_ratio ?? '', e => this._valueChanged('aspect_ratio', e))}
           </div>
         ` : ''}
 
@@ -1327,11 +1334,10 @@ class ChronoPictureCardEditor extends LitElement {
           </div>
         ` : ''}
 
-        <!-- Bar background colors + aspect ratio -->
-        <div class="image-display">
-          ${cpColorPicker('Bottom bar color', c.bottom_bar_background_color ?? '', e => this._valueChanged('bottom_bar_background_color', e))}
-          ${cpColorPicker('Top bar color', c.top_bar_background_color ?? '', e => this._valueChanged('top_bar_background_color', e))}
-          ${cpTextField('Aspect ratio', c.aspect_ratio ?? '', e => this._valueChanged('aspect_ratio', e))}
+        <!-- Bar background colors -->
+        <div class="image-source">
+          ${cpColorPicker('Top bar background color',    c.top_bar_background_color    ?? '', e => this._valueChanged('top_bar_background_color',    e))}
+          ${cpColorPicker('Bottom bar background color', c.bottom_bar_background_color ?? '', e => this._valueChanged('bottom_bar_background_color', e))}
         </div>
 
         <!-- Card-level YAML textarea -->
