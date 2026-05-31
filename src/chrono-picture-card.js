@@ -5,12 +5,18 @@ import { unsafeHTML }            from 'https://unpkg.com/lit@2.0.0/directives/un
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '0.1.31';
+const CARD_VERSION = '0.2.32';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v0.2.32: Refactor — extract all hardcoded configuration values into a unified
+//          constants block: ACTIVE_STATES, DOMAIN_ICON_MAP, DEFAULT_ENTITY_ICON,
+//          DEFAULT_ITEM, DEFAULT_ENTITY_ITEM, DEFAULT_TEMPLATE_ITEM, and five
+//          editor option arrays (VERTICAL_OPTIONS, IMAGE_SOURCE_TYPE_OPTIONS,
+//          CAMERA_VIEW_OPTIONS, FIT_MODE_OPTIONS, OBJECT_POSITION_OPTIONS);
+//          consolidate all separate constant sections under one header
 // v0.1.31: Fix input-select-popup template resolution — use subscribeMessage
 //          (same as template bar items) to render {{ }} in on_select data
 // v0.1.30: Fix input-select-popup — fire select_option then immediately send
@@ -80,6 +86,7 @@ console.info(
 );
 
 // ─── Constants ────────────────────────────────────────────────────────────────
+
 const DOMAINS_TOGGLE = new Set([
   'automation', 'cover', 'fan', 'group', 'humidifier', 'input_boolean',
   'light', 'media_player', 'remote', 'script', 'switch', 'timer', 'vacuum',
@@ -87,31 +94,64 @@ const DOMAINS_TOGGLE = new Set([
 
 const ZONE_KEYS = ['left', 'center', 'right'];
 
-// ─── Default config ───────────────────────────────────────────────────────────
-const DEFAULT_CONFIG = {
-  image_source_type: 'camera',
-  entity:            '',
-  camera_image:      '',
-  camera_view:       'live',
-  image:             '',
-  image_entity:      '',
-  aspect_ratio:      '',
-  fit_mode:          'fill',
-  object_position:   'center',
-  bottom_bar_background_color: '#0000004D',
-  top_bar_background_color:    '',
-  left_items:        [],
-  center_items:      [],
-  right_items:       [],
+const ACTIVE_STATES = ['on', 'open', 'opening', 'unlocked', 'active', 'home', 'playing'];
+
+const DEFAULT_ENTITY_ICON = 'mdi:circle';
+
+const DOMAIN_ICON_MAP = {
+  light:         'mdi:lightbulb',
+  switch:        'mdi:toggle-switch',
+  sensor:        'mdi:eye',
+  script:        'mdi:script-text',
+  automation:    'mdi:robot',
+  input_boolean: 'mdi:toggle-switch',
+  cover:         'mdi:window-shutter',
+  fan:           'mdi:fan',
+  media_player:  'mdi:cast',
+  camera:        'mdi:camera',
 };
 
-// ─── Numeric item keys ────────────────────────────────────────────────────────
+const DEFAULT_ITEM = {
+  vertical:         'bottom',
+  icon:             '',
+  show_state:       false,
+  font_color:       '',
+  font_size:        '',
+  font_weight:      '',
+  line_height:      '',
+  border_radius:    '',
+  background_color: '',
+  padding_top:      '',
+  padding_bottom:   '',
+  padding_left:     '',
+  padding_right:    '',
+};
+
+const DEFAULT_ENTITY_ITEM   = { ...DEFAULT_ITEM, entity:   '' };
+const DEFAULT_TEMPLATE_ITEM = { ...DEFAULT_ITEM, template: '' };
+
+const DEFAULT_CONFIG = {
+  image_source_type:           'camera',
+  entity:                      '',
+  camera_image:                '',
+  camera_view:                 'live',
+  image:                       '',
+  image_entity:                '',
+  aspect_ratio:                '',
+  fit_mode:                    'fill',
+  object_position:             'center',
+  bottom_bar_background_color: '#0000004D',
+  top_bar_background_color:    '',
+  left_items:                  [],
+  center_items:                [],
+  right_items:                 [],
+};
+
 const NUMERIC_ITEM_KEYS = new Set([
   'font_size', 'font_weight', 'line_height', 'border_radius',
   'padding_top', 'padding_bottom', 'padding_left', 'padding_right',
 ]);
 
-// ─── UI-controlled keys ───────────────────────────────────────────────────────
 // Keys managed by dedicated UI fields. All other keys go into the YAML textarea.
 const UI_ITEM_KEYS = new Set([
   'entity', 'template',
@@ -128,6 +168,36 @@ const UI_CARD_KEYS = new Set([
   'bottom_bar_background_color', 'top_bar_background_color',
   'left_items', 'center_items', 'right_items',
 ]);
+
+const VERTICAL_OPTIONS = [
+  { label: 'Bottom', value: 'bottom' },
+  { label: 'Top',    value: 'top'    },
+];
+
+const IMAGE_SOURCE_TYPE_OPTIONS = [
+  { label: 'Camera',       value: 'camera' },
+  { label: 'Image URL',    value: 'url'    },
+  { label: 'Image entity', value: 'entity' },
+];
+
+const CAMERA_VIEW_OPTIONS = [
+  { label: 'Auto', value: 'auto' },
+  { label: 'Live', value: 'live' },
+];
+
+const FIT_MODE_OPTIONS = [
+  { label: 'Cover',   value: 'cover'   },
+  { label: 'Contain', value: 'contain' },
+  { label: 'Fill',    value: 'fill'    },
+];
+
+const OBJECT_POSITION_OPTIONS = [
+  { label: 'Center', value: 'center' },
+  { label: 'Top',    value: 'top'    },
+  { label: 'Bottom', value: 'bottom' },
+  { label: 'Left',   value: 'left'   },
+  { label: 'Right',  value: 'right'  },
+];
 
 // ─── YAML helpers ─────────────────────────────────────────────────────────────
 function serializeExtrasToYaml(obj, uiKeys) {
@@ -167,25 +237,16 @@ function defaultTapAction(domain) {
 function isStateActive(stateObj) {
   if (!stateObj) return false;
   const s = stateObj.state;
-  return ['on', 'open', 'opening', 'unlocked', 'active', 'home', 'playing'].includes(s);
+  return ACTIVE_STATES.includes(s);
 }
 
 function domainIcon(domain, stateObj) {
   const dc  = stateObj?.attributes?.device_class;
   const map = {
-    light:         'mdi:lightbulb',
-    switch:        'mdi:toggle-switch',
+    ...DOMAIN_ICON_MAP,
     binary_sensor: dc ? `mdi:${dc}` : 'mdi:radiobox-blank',
-    sensor:        'mdi:eye',
-    script:        'mdi:script-text',
-    automation:    'mdi:robot',
-    input_boolean: 'mdi:toggle-switch',
-    cover:         'mdi:window-shutter',
-    fan:           'mdi:fan',
-    media_player:  'mdi:cast',
-    camera:        'mdi:camera',
   };
-  return stateObj?.attributes?.icon ?? map[domain] ?? 'mdi:circle';
+  return stateObj?.attributes?.icon ?? map[domain] ?? DEFAULT_ENTITY_ICON;
 }
 
 // ─── Aspect ratio helper ──────────────────────────────────────────────────────
@@ -763,7 +824,7 @@ class ChronoPictureCardEditor extends LitElement {
 
   // ── Add / remove / reorder items ──────────────────────────────────────────
   _addItem(zone, type) {
-    const base   = type === 'entity' ? { entity: '', vertical: 'bottom' } : { template: '', vertical: 'bottom' };
+    const base   = type === 'entity' ? { ...DEFAULT_ENTITY_ITEM } : { ...DEFAULT_TEMPLATE_ITEM };
     const items  = [...(this._config[`${zone}_items`] ?? []), base];
     this._config = { ...this._config, [`${zone}_items`]: items };
     this._fireConfig();
@@ -785,35 +846,11 @@ class ChronoPictureCardEditor extends LitElement {
   }
 
   // ── Option arrays ─────────────────────────────────────────────────────────
-  _verticalOptions = [
-    { label: 'Bottom', value: 'bottom' },
-    { label: 'Top',    value: 'top'    },
-  ];
-
-  _imageSourceTypeOptions = [
-    { label: 'Camera',      value: 'camera'   },
-    { label: 'Image URL',   value: 'url'      },
-    { label: 'Image entity',value: 'entity'   },
-  ];
-
-  _cameraViewOptions = [
-    { label: 'Auto', value: 'auto' },
-    { label: 'Live', value: 'live' },
-  ];
-
-  _fitModeOptions = [
-    { label: 'Cover',   value: 'cover'   },
-    { label: 'Contain', value: 'contain' },
-    { label: 'Fill',    value: 'fill'    },
-  ];
-
-  _objectPositionOptions = [
-    { label: 'Center', value: 'center' },
-    { label: 'Top',    value: 'top'    },
-    { label: 'Bottom', value: 'bottom' },
-    { label: 'Left',   value: 'left'   },
-    { label: 'Right',  value: 'right'  },
-  ];
+  _verticalOptions           = VERTICAL_OPTIONS;
+  _imageSourceTypeOptions    = IMAGE_SOURCE_TYPE_OPTIONS;
+  _cameraViewOptions         = CAMERA_VIEW_OPTIONS;
+  _fitModeOptions            = FIT_MODE_OPTIONS;
+  _objectPositionOptions     = OBJECT_POSITION_OPTIONS;
 
   // ─── Zone panel ────────────────────────────────────────────────────────────────────────────
   _renderZonePanel(zone) {
@@ -1279,8 +1316,6 @@ class ChronoPictureCard extends LitElement {
     return {
       ...DEFAULT_CONFIG,
       image: 'https://demo.home-assistant.io/stub_config/kitchen.png',
-      bottom_bar_background_color: '#0000004D',
-      top_bar_background_color: '',
       left_items:   [{ template: 'My Camera', font_color: 'white', font_size: 1.1, font_weight: 600 }],
       center_items: [],
       right_items:  [],
