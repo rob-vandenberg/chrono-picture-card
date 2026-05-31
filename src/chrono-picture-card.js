@@ -5,12 +5,17 @@ import { unsafeHTML }            from 'https://unpkg.com/lit@2.0.0/directives/un
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '0.2.32';
+const CARD_VERSION = '0.3.33';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v0.3.33: Replace left_items/center_items/right_items with single items array;
+//          add horizontal property (left/center/right) per item alongside
+//          existing vertical (top/bottom); merge three zone editor panels into
+//          one; add HORIZONTAL_OPTIONS const; auto-migrate old configs on load;
+//          update DEFAULT_ITEM with new default values
 // v0.2.32: Refactor — extract all hardcoded configuration values into a unified
 //          constants block: ACTIVE_STATES, DOMAIN_ICON_MAP, DEFAULT_ENTITY_ICON,
 //          DEFAULT_ITEM, DEFAULT_ENTITY_ITEM, DEFAULT_TEMPLATE_ITEM, and five
@@ -92,8 +97,6 @@ const DOMAINS_TOGGLE = new Set([
   'light', 'media_player', 'remote', 'script', 'switch', 'timer', 'vacuum',
 ]);
 
-const ZONE_KEYS = ['left', 'center', 'right'];
-
 const ACTIVE_STATES = ['on', 'open', 'opening', 'unlocked', 'active', 'home', 'playing'];
 
 const DEFAULT_ENTITY_ICON = 'mdi:circle';
@@ -112,19 +115,20 @@ const DOMAIN_ICON_MAP = {
 };
 
 const DEFAULT_ITEM = {
+  horizontal:       'center',
   vertical:         'bottom',
   icon:             '',
   show_state:       false,
   font_color:       '',
-  font_size:        '',
-  font_weight:      '',
-  line_height:      '',
-  border_radius:    '',
+  font_size:        1.2,
+  font_weight:      600,
+  line_height:      1.2,
+  border_radius:    50,
   background_color: '',
-  padding_top:      '',
-  padding_bottom:   '',
-  padding_left:     '',
-  padding_right:    '',
+  padding_top:      12,
+  padding_bottom:   12,
+  padding_left:     12,
+  padding_right:    12,
 };
 
 const DEFAULT_ENTITY_ITEM   = { ...DEFAULT_ITEM, entity:   '' };
@@ -142,9 +146,7 @@ const DEFAULT_CONFIG = {
   object_position:             'center',
   bottom_bar_background_color: '#0000004D',
   top_bar_background_color:    '',
-  left_items:                  [],
-  center_items:                [],
-  right_items:                 [],
+  items:                       [],
 };
 
 const NUMERIC_ITEM_KEYS = new Set([
@@ -155,7 +157,7 @@ const NUMERIC_ITEM_KEYS = new Set([
 // Keys managed by dedicated UI fields. All other keys go into the YAML textarea.
 const UI_ITEM_KEYS = new Set([
   'entity', 'template',
-  'vertical',
+  'horizontal', 'vertical',
   'icon', 'show_state',
   'font_color', 'font_size', 'font_weight', 'line_height', 'border_radius',
   'background_color',
@@ -166,12 +168,18 @@ const UI_CARD_KEYS = new Set([
   'type', 'image_source_type', 'entity', 'camera_image', 'camera_view',
   'image', 'image_entity', 'aspect_ratio', 'fit_mode', 'object_position',
   'bottom_bar_background_color', 'top_bar_background_color',
-  'left_items', 'center_items', 'right_items',
+  'items',
 ]);
 
 const VERTICAL_OPTIONS = [
   { label: 'Bottom', value: 'bottom' },
   { label: 'Top',    value: 'top'    },
+];
+
+const HORIZONTAL_OPTIONS = [
+  { label: 'Left',   value: 'left'   },
+  { label: 'Center', value: 'center' },
+  { label: 'Right',  value: 'right'  },
 ];
 
 const IMAGE_SOURCE_TYPE_OPTIONS = [
@@ -742,6 +750,16 @@ class ChronoPictureCardEditor extends LitElement {
   };
 
   setConfig(config) {
+    // Migrate old left_items/center_items/right_items to single items array
+    if (config.left_items || config.center_items || config.right_items) {
+      const migrated = [
+        ...(config.left_items   ?? []).map(i => ({ ...i, horizontal: 'left'   })),
+        ...(config.center_items ?? []).map(i => ({ ...i, horizontal: 'center' })),
+        ...(config.right_items  ?? []).map(i => ({ ...i, horizontal: 'right'  })),
+      ];
+      const { left_items, center_items, right_items, ...rest } = config;
+      config = { ...rest, items: migrated };
+    }
     this._config = config;
   }
 
@@ -778,7 +796,7 @@ class ChronoPictureCardEditor extends LitElement {
   }
 
   // ── Item-level UI field changed ───────────────────────────────────────────
-  _itemChanged(zone, index, key, e) {
+  _itemChanged(index, key, e) {
     if (!this._config) return;
     const raw = e.target.value ?? e.detail?.value;
     let value;
@@ -789,19 +807,19 @@ class ChronoPictureCardEditor extends LitElement {
     } else {
       value = raw;
     }
-    const items      = [...(this._config[`${zone}_items`] ?? [])];
+    const items      = [...(this._config.items ?? [])];
     items[index]     = { ...items[index], [key]: value };
-    this._config     = { ...this._config, [`${zone}_items`]: items };
+    this._config     = { ...this._config, items };
     this._fireConfig();
   }
 
   // ── Item-level YAML textarea changed ─────────────────────────────────────
-  _itemYamlChanged(zone, index, e) {
+  _itemYamlChanged(index, e) {
     if (!this._config) return;
     const text   = e.target.value ?? e.detail?.value ?? '';
     const parsed = parseYamlExtras(text);
     if (parsed === null) return; // invalid YAML — don't save
-    const items  = [...(this._config[`${zone}_items`] ?? [])];
+    const items  = [...(this._config.items ?? [])];
     const item   = items[index];
     // Keep only UI-controlled keys from the existing item, then merge extras
     const clean  = {};
@@ -809,59 +827,58 @@ class ChronoPictureCardEditor extends LitElement {
       if (UI_ITEM_KEYS.has(k)) clean[k] = v;
     }
     items[index]     = { ...clean, ...parsed };
-    this._config     = { ...this._config, [`${zone}_items`]: items };
+    this._config     = { ...this._config, items };
     this._fireConfig();
   }
 
-  _itemToggled(zone, index, key, e) {
+  _itemToggled(index, key, e) {
     if (!this._config) return;
     const value      = e.target.checked;
-    const items      = [...(this._config[`${zone}_items`] ?? [])];
+    const items      = [...(this._config.items ?? [])];
     items[index]     = { ...items[index], [key]: value };
-    this._config     = { ...this._config, [`${zone}_items`]: items };
+    this._config     = { ...this._config, items };
     this._fireConfig();
   }
 
   // ── Add / remove / reorder items ──────────────────────────────────────────
-  _addItem(zone, type) {
+  _addItem(type) {
     const base   = type === 'entity' ? { ...DEFAULT_ENTITY_ITEM } : { ...DEFAULT_TEMPLATE_ITEM };
-    const items  = [...(this._config[`${zone}_items`] ?? []), base];
-    this._config = { ...this._config, [`${zone}_items`]: items };
+    const items  = [...(this._config.items ?? []), base];
+    this._config = { ...this._config, items };
     this._fireConfig();
   }
 
-  _removeItem(zone, index) {
-    const items  = (this._config[`${zone}_items`] ?? []).filter((_, i) => i !== index);
-    this._config = { ...this._config, [`${zone}_items`]: items };
+  _removeItem(index) {
+    const items  = (this._config.items ?? []).filter((_, i) => i !== index);
+    this._config = { ...this._config, items };
     this._fireConfig();
   }
 
-  _itemMoved(zone, e) {
+  _itemMoved(e) {
     e.stopPropagation();
     const { oldIndex, newIndex } = e.detail;
-    const items  = [...(this._config[`${zone}_items`] ?? [])];
+    const items  = [...(this._config.items ?? [])];
     items.splice(newIndex, 0, items.splice(oldIndex, 1)[0]);
-    this._config = { ...this._config, [`${zone}_items`]: items };
+    this._config = { ...this._config, items };
     this._fireConfig();
   }
 
   // ── Option arrays ─────────────────────────────────────────────────────────
   _verticalOptions           = VERTICAL_OPTIONS;
+  _horizontalOptions         = HORIZONTAL_OPTIONS;
   _imageSourceTypeOptions    = IMAGE_SOURCE_TYPE_OPTIONS;
   _cameraViewOptions         = CAMERA_VIEW_OPTIONS;
   _fitModeOptions            = FIT_MODE_OPTIONS;
   _objectPositionOptions     = OBJECT_POSITION_OPTIONS;
 
-  // ─── Zone panel ────────────────────────────────────────────────────────────────────────────
-  _renderZonePanel(zone) {
-    const items      = this._config?.[`${zone}_items`] ?? [];
-    const zoneLabels = { left: 'Left Items', center: 'Center Items', right: 'Right Items' };
-    const zoneLabel  = zoneLabels[zone];
+  // ─── Items panel ───────────────────────────────────────────────────────────
+  _renderItemsPanel() {
+    const items = this._config?.items ?? [];
 
     return html`
-      <ha-expansion-panel header="${zoneLabel}" outlined>
+      <ha-expansion-panel header="Items" outlined>
 
-        <ha-sortable handle-selector=".handle" @item-moved=${(e) => this._itemMoved(zone, e)}>
+        <ha-sortable handle-selector=".handle" @item-moved=${(e) => this._itemMoved(e)}>
           <div class="items-list">
             ${items.map((item, index) => {
               const isEntity   = 'entity'   in item;
@@ -889,49 +906,50 @@ class ChronoPictureCardEditor extends LitElement {
                     <ha-svg-icon .path=${mdiDragHorizontalVariant}></ha-svg-icon>
                   </div>
 
-                  <!-- Vertical (top/bottom) button group -->
+                  <!-- Position: vertical (top/bottom) and horizontal (left/center/right) -->
                   <div class="item-position-row">
-                    ${cpButtonPicker('', item.vertical ?? 'bottom', this._verticalOptions, e => this._itemChanged(zone, index, 'vertical', e))}
+                    ${cpButtonPicker('', item.vertical ?? 'bottom', this._verticalOptions, e => this._itemChanged(index, 'vertical', e))}
+                    ${cpButtonPicker('', item.horizontal ?? 'center', this._horizontalOptions, e => this._itemChanged(index, 'horizontal', e))}
                   </div>
 
                   <!-- Entity ID or Template string -->
                   <div class="item-content-row">
                     ${isEntity
-                      ? cpTextField('Entity ID', item.entity ?? '', e => this._itemChanged(zone, index, 'entity', e))
-                      : cpTextField('Template\n<i>supports Jinja2 e.g. {{ states("sensor.temp") }} °C</i>', item.template ?? '', e => this._itemChanged(zone, index, 'template', e))
+                      ? cpTextField('Entity ID', item.entity ?? '', e => this._itemChanged(index, 'entity', e))
+                      : cpTextField('Template\n<i>supports Jinja2 e.g. {{ states("sensor.temp") }} °C</i>', item.template ?? '', e => this._itemChanged(index, 'template', e))
                     }
                   </div>
 
                   <!-- Entity-only: icon override -->
                   ${isEntity ? html`
                     <div class="item-content-row">
-                      ${cpTextField('Icon', item.icon ?? '', e => this._itemChanged(zone, index, 'icon', e))}
+                      ${cpTextField('Icon', item.icon ?? '', e => this._itemChanged(index, 'icon', e))}
                     </div>
                   ` : ''}
 
                   <!-- Entity-only: show state toggle -->
                   ${isEntity ? html`
                     <div class="item-toggles-row">
-                      ${cpToggleField('Show state', item.show_state ?? false, e => this._itemToggled(zone, index, 'show_state', e))}
+                      ${cpToggleField('Show state', item.show_state ?? false, e => this._itemToggled(index, 'show_state', e))}
                     </div>
                   ` : ''}
 
                   <!-- Typography: font color, size, weight, line height, border radius -->
                   <div class="item-typography">
-                    ${cpColorPicker('Font color', item.font_color ?? '', e => this._itemChanged(zone, index, 'font_color', e))}
-                    ${cpTextField('Font size (em)', item.font_size   ?? '', e => this._itemChanged(zone, index, 'font_size',   e), { type: 'number', step: '0.1', min: '0' })}
-                    ${cpTextField('Font weight',    item.font_weight ?? '', e => this._itemChanged(zone, index, 'font_weight', e), { type: 'number', step: '100', min: '100', max: '900' })}
-                    ${cpTextField('Line height',    item.line_height ?? '', e => this._itemChanged(zone, index, 'line_height', e), { type: 'number', step: '0.1', min: '0' })}
-                    ${cpTextField('Border\nradius (px)', item.border_radius ?? '', e => this._itemChanged(zone, index, 'border_radius', e), { type: 'number', step: '1', min: '0' })}
+                    ${cpColorPicker('Font color', item.font_color ?? '', e => this._itemChanged(index, 'font_color', e))}
+                    ${cpTextField('Font size (em)', item.font_size   ?? '', e => this._itemChanged(index, 'font_size',   e), { type: 'number', step: '0.1', min: '0' })}
+                    ${cpTextField('Font weight',    item.font_weight ?? '', e => this._itemChanged(index, 'font_weight', e), { type: 'number', step: '100', min: '100', max: '900' })}
+                    ${cpTextField('Line height',    item.line_height ?? '', e => this._itemChanged(index, 'line_height', e), { type: 'number', step: '0.1', min: '0' })}
+                    ${cpTextField('Border\nradius (px)', item.border_radius ?? '', e => this._itemChanged(index, 'border_radius', e), { type: 'number', step: '1', min: '0' })}
                   </div>
 
                   <!-- Background color and padding -->
                   <div class="item-bg-color-padding">
-                    ${cpColorPicker('Background color', item.background_color ?? '', e => this._itemChanged(zone, index, 'background_color', e))}
-                    ${cpTextField('Padding\ntop (px)',    item.padding_top    ?? '', e => this._itemChanged(zone, index, 'padding_top',    e), { type: 'number', step: '1', min: '0' })}
-                    ${cpTextField('Padding\nbottom (px)', item.padding_bottom ?? '', e => this._itemChanged(zone, index, 'padding_bottom', e), { type: 'number', step: '1', min: '0' })}
-                    ${cpTextField('Padding\nleft (px)',   item.padding_left   ?? '', e => this._itemChanged(zone, index, 'padding_left',   e), { type: 'number', step: '1', min: '0' })}
-                    ${cpTextField('Padding\nright (px)',  item.padding_right  ?? '', e => this._itemChanged(zone, index, 'padding_right',  e), { type: 'number', step: '1', min: '0' })}
+                    ${cpColorPicker('Background color', item.background_color ?? '', e => this._itemChanged(index, 'background_color', e))}
+                    ${cpTextField('Padding\ntop (px)',    item.padding_top    ?? '', e => this._itemChanged(index, 'padding_top',    e), { type: 'number', step: '1', min: '0' })}
+                    ${cpTextField('Padding\nbottom (px)', item.padding_bottom ?? '', e => this._itemChanged(index, 'padding_bottom', e), { type: 'number', step: '1', min: '0' })}
+                    ${cpTextField('Padding\nleft (px)',   item.padding_left   ?? '', e => this._itemChanged(index, 'padding_left',   e), { type: 'number', step: '1', min: '0' })}
+                    ${cpTextField('Padding\nright (px)',  item.padding_right  ?? '', e => this._itemChanged(index, 'padding_right',  e), { type: 'number', step: '1', min: '0' })}
                   </div>
 
                   <!-- YAML extras textarea -->
@@ -941,14 +959,14 @@ class ChronoPictureCardEditor extends LitElement {
                       <chrono-cp-textarea
                         .value=${extrasYaml}
                         placeholder=""
-                        @input=${e => this._itemYamlChanged(zone, index, e)}
+                        @input=${e => this._itemYamlChanged(index, e)}
                       ></chrono-cp-textarea>
                     </div>
                   </div>
 
                   <!-- Remove button -->
                   <div class="remove-item-row">
-                    <button class="remove-item-btn" @click=${() => this._removeItem(zone, index)}>
+                    <button class="remove-item-btn" @click=${() => this._removeItem(index)}>
                       Remove item
                     </button>
                   </div>
@@ -960,8 +978,8 @@ class ChronoPictureCardEditor extends LitElement {
         </ha-sortable>
 
         <div class="add-item-row">
-          <button class="add-item-btn" @click=${() => this._addItem(zone, 'entity')}>+ Add entity</button>
-          <button class="add-item-btn" @click=${() => this._addItem(zone, 'template')}>+ Add template</button>
+          <button class="add-item-btn" @click=${() => this._addItem('entity')}>+ Add entity</button>
+          <button class="add-item-btn" @click=${() => this._addItem('template')}>+ Add template</button>
         </div>
 
       </ha-expansion-panel>
@@ -1287,9 +1305,9 @@ class ChronoPictureCardEditor extends LitElement {
 
       </ha-expansion-panel>
 
-      <!-- ── Zone panels ───────────────────────────────────────────────────────────────────────────────── -->
+      <!-- ── Items panel ─────────────────────────────────────────────────────────────────────── -->
 
-      ${ZONE_KEYS.map(zone => this._renderZonePanel(zone))}
+      ${this._renderItemsPanel()}
 
     `;
   }
@@ -1316,9 +1334,7 @@ class ChronoPictureCard extends LitElement {
     return {
       ...DEFAULT_CONFIG,
       image: 'https://demo.home-assistant.io/stub_config/kitchen.png',
-      left_items:   [{ template: 'My Camera', font_color: 'white', font_size: 1.1, font_weight: 600 }],
-      center_items: [],
-      right_items:  [],
+      items: [{ template: 'My Camera', horizontal: 'left', vertical: 'bottom', font_color: 'white', font_size: 1.1, font_weight: 600 }],
     };
   }
 
@@ -1347,19 +1363,28 @@ class ChronoPictureCard extends LitElement {
   }
 
   setConfig(config) {
+    // Migrate old left_items/center_items/right_items to single items array
+    if (config.left_items || config.center_items || config.right_items) {
+      const migrated = [
+        ...(config.left_items   ?? []).map(i => ({ ...i, horizontal: 'left'   })),
+        ...(config.center_items ?? []).map(i => ({ ...i, horizontal: 'center' })),
+        ...(config.right_items  ?? []).map(i => ({ ...i, horizontal: 'right'  })),
+      ];
+      const { left_items, center_items, right_items, ...rest } = config;
+      config = { ...rest, items: migrated };
+    }
+
     let needsResubscribe = this._templateUnsubs.length === 0;
 
     if (!needsResubscribe && this._config) {
-      outer: for (const zone of ZONE_KEYS) {
-        const oldItems = this._config[`${zone}_items`] ?? [];
-        const newItems = config[`${zone}_items`]       ?? [];
-        for (let i = 0; i < Math.max(oldItems.length, newItems.length); i++) {
-          const oldTmpl = oldItems[i]?.template ?? '';
-          const newTmpl = newItems[i]?.template ?? '';
-          if (newTmpl !== oldTmpl && (oldTmpl.includes('{{') || newTmpl.includes('{{'))) {
-            needsResubscribe = true;
-            break outer;
-          }
+      const oldItems = this._config.items ?? [];
+      const newItems = config.items       ?? [];
+      for (let i = 0; i < Math.max(oldItems.length, newItems.length); i++) {
+        const oldTmpl = oldItems[i]?.template ?? '';
+        const newTmpl = newItems[i]?.template ?? '';
+        if (newTmpl !== oldTmpl && (oldTmpl.includes('{{') || newTmpl.includes('{{'))) {
+          needsResubscribe = true;
+          break;
         }
       }
     }
@@ -1398,17 +1423,15 @@ class ChronoPictureCard extends LitElement {
       this._templateUnsubs.push(unsub);
     };
 
-    for (const zone of ZONE_KEYS) {
-      const items = this._config?.[`${zone}_items`] ?? [];
-      items.forEach((item, index) => {
-        if ('template' in item) {
-          const key = `${zone}-${index}`;
-          sub(item.template ?? '', (value) => {
-            this._itemValues = { ...this._itemValues, [key]: value };
-          });
-        }
-      });
-    }
+    const items = this._config?.items ?? [];
+    items.forEach((item, index) => {
+      if ('template' in item) {
+        const key = `item-${index}`;
+        sub(item.template ?? '', (value) => {
+          this._itemValues = { ...this._itemValues, [key]: value };
+        });
+      }
+    });
   }
 
   _teardownSubscriptions() {
@@ -1572,9 +1595,9 @@ class ChronoPictureCard extends LitElement {
   }
 
   // ── Render a single bar item ──────────────────────────────────────────────
-  _renderItem(item, zone, index) {
+  _renderItem(item, index) {
     if ('template' in item) {
-      const key    = `${zone}-${index}`;
+      const key    = `item-${index}`;
       const value  = this._itemValues[key] ?? '';
       const hasTap = item.tap_action && item.tap_action.action !== 'none';
       return html`
@@ -1622,12 +1645,18 @@ class ChronoPictureCard extends LitElement {
   }
 
   // ── Render a bar zone ─────────────────────────────────────────────────────
-  _renderZone(zone, vertical) {
-    const allItems = this._config?.[`${zone}_items`] ?? [];
-    const items    = allItems.filter(item => (item.vertical ?? 'bottom') === vertical);
+  _renderZone(horizontal, vertical) {
+    const allItems = this._config?.items ?? [];
+    const items    = allItems.filter(item =>
+      (item.horizontal ?? 'center') === horizontal &&
+      (item.vertical   ?? 'bottom') === vertical
+    );
     return html`
-      <div class="bar-zone bar-zone-${zone}">
-        ${items.map((item, index) => this._renderItem(item, zone, index))}
+      <div class="bar-zone bar-zone-${horizontal}">
+        ${items.map((item, index) => {
+          const globalIndex = allItems.indexOf(item);
+          return this._renderItem(item, globalIndex);
+        })}
       </div>
     `;
   }
@@ -1854,11 +1883,11 @@ class ChronoPictureCard extends LitElement {
         </div>
 
         <div class="bar bar-top" style=${styleMap({'background-color': c.top_bar_background_color || undefined})}>
-          ${ZONE_KEYS.map(zone => this._renderZone(zone, 'top'))}
+          ${['left', 'center', 'right'].map(h => this._renderZone(h, 'top'))}
         </div>
 
         <div class="bar bar-bottom" style=${styleMap({'background-color': c.bottom_bar_background_color || undefined})}>
-          ${ZONE_KEYS.map(zone => this._renderZone(zone, 'bottom'))}
+          ${['left', 'center', 'right'].map(h => this._renderZone(h, 'bottom'))}
         </div>
 
         ${this._popup ? html`
