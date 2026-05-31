@@ -2,15 +2,20 @@ import { LitElement, html, css } from 'https://unpkg.com/lit@2.0.0/index.js?modu
 import { live }                  from 'https://unpkg.com/lit@2.0.0/directives/live.js?module';
 import { styleMap }              from 'https://unpkg.com/lit@2.0.0/directives/style-map.js?module';
 import { unsafeHTML }            from 'https://unpkg.com/lit@2.0.0/directives/unsafe-html.js?module';
+import { repeat }                from 'https://unpkg.com/lit@2.0.0/directives/repeat.js?module';
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '0.3.37';
+const CARD_VERSION = '0.3.38';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v0.3.38: Add permanent _id per item for stable Lit keying via repeat();
+//          add show boolean per item (default true) with toggle as first row;
+//          dim header when show is false; skip hidden items in card render;
+//          assign _id to items missing one during setConfig migration
 // v0.3.37: Add SHOW_ITEM_POSITION_BADGES const (default false) to toggle T/B
 //          L/C/R badges; add group dividers between groups in items list;
 //          rename "Items" panel to "Items configuration"
@@ -126,6 +131,8 @@ const DOMAIN_ICON_MAP = {
 };
 
 const DEFAULT_ITEM = {
+  _id:              '',
+  show:             true,
   horizontal:       'center',
   vertical:         'bottom',
   icon:             '',
@@ -167,6 +174,7 @@ const NUMERIC_ITEM_KEYS = new Set([
 
 // Keys managed by dedicated UI fields. All other keys go into the YAML textarea.
 const UI_ITEM_KEYS = new Set([
+  '_id', 'show',
   'entity', 'template',
   'horizontal', 'vertical',
   'icon', 'show_state',
@@ -239,6 +247,11 @@ const _GROUP_ORDER = [
 function sortItems(items) {
   const key = item => `${item.vertical ?? 'bottom'}-${item.horizontal ?? 'center'}`;
   return [...items].sort((a, b) => _GROUP_ORDER.indexOf(key(a)) - _GROUP_ORDER.indexOf(key(b)));
+}
+
+// ─── generateId ───────────────────────────────────────────────────────────────
+function generateId() {
+  return Math.random().toString(16).slice(2, 10);
 }
 
 // ─── YAML helpers ─────────────────────────────────────────────────────────────
@@ -796,6 +809,10 @@ class ChronoPictureCardEditor extends LitElement {
       const { left_items, center_items, right_items, ...rest } = config;
       config = { ...rest, items: migrated };
     }
+    // Assign _id to any item missing one
+    if (config.items?.some(i => !i._id)) {
+      config = { ...config, items: config.items.map(i => i._id ? i : { ...i, _id: generateId() }) };
+    }
     this._config = config;
   }
 
@@ -882,7 +899,9 @@ class ChronoPictureCardEditor extends LitElement {
 
   // ── Add / remove / reorder items ──────────────────────────────────────────
   _addItem(type) {
-    const base   = type === 'entity' ? { ...DEFAULT_ENTITY_ITEM } : { ...DEFAULT_TEMPLATE_ITEM };
+    const base   = type === 'entity'
+      ? { ...DEFAULT_ENTITY_ITEM,   _id: generateId() }
+      : { ...DEFAULT_TEMPLATE_ITEM, _id: generateId() };
     const items  = this._sortItems([...(this._config.items ?? []), base]);
     this._config = { ...this._config, items };
     this._fireConfig();
@@ -926,7 +945,7 @@ class ChronoPictureCardEditor extends LitElement {
 
         <ha-sortable handle-selector=".handle" @item-moved=${(e) => this._itemMoved(e)}>
           <div class="items-list">
-            ${items.map((item, index) => {
+            ${repeat(items, item => item._id, (item, index) => {
               const isEntity   = 'entity'   in item;
               const typeLabel  = isEntity ? 'Entity' : 'Template';
               const typeClass  = isEntity ? 'entity' : 'template';
@@ -953,7 +972,7 @@ class ChronoPictureCardEditor extends LitElement {
 
                 <ha-expansion-panel outlined>
 
-                  <div slot="header" style="display:flex;align-items:center;gap:6px;">
+                  <div slot="header" style="display:flex;align-items:center;gap:6px;${item.show === false ? 'opacity:0.45;' : ''}">
                     ${SHOW_ITEM_POSITION_BADGES ? html`
                       <span class="item-pos-badge" style="background:${VERTICAL_BADGE_COLORS[item.vertical ?? 'bottom']}">${(item.vertical ?? 'bottom') === 'top' ? 'T' : 'B'}</span>
                       <span class="item-pos-badge" style="background:${HORIZONTAL_BADGE_COLORS[item.horizontal ?? 'center']}">${{ left: 'L', center: 'C', right: 'R' }[item.horizontal ?? 'center']}</span>
@@ -964,6 +983,11 @@ class ChronoPictureCardEditor extends LitElement {
 
                   <div class="handle" slot="leading-icon">
                     <ha-svg-icon .path=${mdiDragHorizontalVariant}></ha-svg-icon>
+                  </div>
+
+                  <!-- Show toggle — first row -->
+                  <div class="item-toggles-row">
+                    ${cpToggleField('Show', item.show !== false, e => this._itemToggled(index, 'show', e))}
                   </div>
 
                   <!-- Position: vertical (top/bottom) and horizontal (left/center/right) -->
@@ -1466,6 +1490,10 @@ class ChronoPictureCard extends LitElement {
       const { left_items, center_items, right_items, ...rest } = config;
       config = { ...rest, items: migrated };
     }
+    // Assign _id to any item missing one
+    if (config.items?.some(i => !i._id)) {
+      config = { ...config, items: config.items.map(i => i._id ? i : { ...i, _id: generateId() }) };
+    }
 
     let needsResubscribe = this._templateUnsubs.length === 0;
 
@@ -1689,6 +1717,7 @@ class ChronoPictureCard extends LitElement {
 
   // ── Render a single bar item ──────────────────────────────────────────────
   _renderItem(item, index) {
+    if (item.show === false) return html``;
     if ('template' in item) {
       const key    = `item-${index}`;
       const value  = this._itemValues[key] ?? '';
