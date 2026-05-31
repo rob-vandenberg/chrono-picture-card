@@ -5,12 +5,15 @@ import { unsafeHTML }            from 'https://unpkg.com/lit@2.0.0/directives/un
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '0.3.36';
+const CARD_VERSION = '0.3.37';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v0.3.37: Add SHOW_ITEM_POSITION_BADGES const (default false) to toggle T/B
+//          L/C/R badges; add group dividers between groups in items list;
+//          rename "Items" panel to "Items configuration"
 // v0.3.36: Move aspect ratio to camera/fit mode row; rename bar color labels;
 //          swap top/bottom bar order; reduce button height to 32px with 2px margins
 // v0.3.35: Fix sort order — extract sortItems() as module-level function so
@@ -225,6 +228,8 @@ const HORIZONTAL_BADGE_COLORS = {
   center: '#10a800',
   right:  '#00a896',
 };
+
+const SHOW_ITEM_POSITION_BADGES = false;
 
 // ─── sortItems ────────────────────────────────────────────────────────────────
 const _GROUP_ORDER = [
@@ -910,8 +915,14 @@ class ChronoPictureCardEditor extends LitElement {
   _renderItemsPanel() {
     const items = this._config?.items ?? [];
 
+    const groupLabel = item => {
+      const v = (item.vertical   ?? 'bottom') === 'top' ? 'Top' : 'Bottom';
+      const h = { left: 'Left', center: 'Center', right: 'Right' }[item.horizontal ?? 'center'];
+      return `${v} · ${h}`;
+    };
+
     return html`
-      <ha-expansion-panel header="Items" outlined>
+      <ha-expansion-panel header="Items configuration" outlined>
 
         <ha-sortable handle-selector=".handle" @item-moved=${(e) => this._itemMoved(e)}>
           <div class="items-list">
@@ -929,12 +940,24 @@ class ChronoPictureCardEditor extends LitElement {
 
               const extrasYaml = serializeExtrasToYaml(item, UI_ITEM_KEYS);
 
+              const prevItem   = items[index - 1];
+              const showDivider = index === 0 || groupLabel(item) !== groupLabel(prevItem);
+
               return html`
+                ${showDivider ? html`
+                  <div class="group-divider">
+                    <span class="group-divider-label">${groupLabel(item)}</span>
+                    <div class="group-divider-line"></div>
+                  </div>
+                ` : ''}
+
                 <ha-expansion-panel outlined>
 
                   <div slot="header" style="display:flex;align-items:center;gap:6px;">
-                    <span class="item-pos-badge" style="background:${VERTICAL_BADGE_COLORS[item.vertical ?? 'bottom']}">${(item.vertical ?? 'bottom') === 'top' ? 'T' : 'B'}</span>
-                    <span class="item-pos-badge" style="background:${HORIZONTAL_BADGE_COLORS[item.horizontal ?? 'center']}">${{ left: 'L', center: 'C', right: 'R' }[item.horizontal ?? 'center']}</span>
+                    ${SHOW_ITEM_POSITION_BADGES ? html`
+                      <span class="item-pos-badge" style="background:${VERTICAL_BADGE_COLORS[item.vertical ?? 'bottom']}">${(item.vertical ?? 'bottom') === 'top' ? 'T' : 'B'}</span>
+                      <span class="item-pos-badge" style="background:${HORIZONTAL_BADGE_COLORS[item.horizontal ?? 'center']}">${{ left: 'L', center: 'C', right: 'R' }[item.horizontal ?? 'center']}</span>
+                    ` : ''}
                     <span class="item-type-badge ${typeClass}">${typeLabel}</span>
                     <span>${headerText}</span>
                   </div>
@@ -1239,6 +1262,27 @@ class ChronoPictureCardEditor extends LitElement {
     }
 
     /* ── Item type badge ───────────────────────────────────────────────────── */
+
+    .group-divider {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 8px 0 4px;
+    }
+
+    .group-divider-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--secondary-text-color);
+      white-space: nowrap;
+    }
+
+    .group-divider-line {
+      flex: 1;
+      height: 1px;
+      background: var(--divider-color, #444);
+      opacity: 0.4;
+    }
 
     .item-pos-badge {
       font-size: 10px;
