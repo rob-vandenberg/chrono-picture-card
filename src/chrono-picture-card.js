@@ -6,12 +6,17 @@ import { repeat }                from 'https://unpkg.com/lit@2.0.0/directives/re
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.0.102';
+const CARD_VERSION = '1.0.103';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.0.103: Badge word-wrap fix (white-space:nowrap); header text truncated at
+//          30 chars; Additional YAML sections hidden (code kept); new entity
+//          item defaults to first light.* entity (fallback: first entity);
+//          new template item defaults to {{ now().strftime('%H:%M') }}; after
+//          adding an item the Entity ID / Template field receives focus.
 // v1.0.102: When a new item is added, all other item panels collapse and the new
 //          item's panel expands and scrolls into view. Item panel open/closed
 //          state is now tracked via _expandedItemId.
@@ -1025,16 +1030,26 @@ class ChronoPictureCardEditor extends LitElement {
   // ── Add / remove / reorder items ──────────────────────────────────────────
   _addItem(type) {
     const existing = this._config.items ?? [];
-    const base   = type === 'entity'
-      ? { ...DEFAULT_ENTITY_ITEM,   _id: generateId(existing) }
-      : { ...DEFAULT_TEMPLATE_ITEM, _id: generateId(existing) };
+    let defaultValue = '';
+    if (type === 'entity') {
+      const states = this.hass?.states ?? {};
+      const light  = Object.keys(states).find(id => id.startsWith('light.'));
+      defaultValue = light ?? Object.keys(states)[0] ?? '';
+    } else {
+      defaultValue = "{{ now().strftime('%H:%M') }}";
+    }
+    const base = type === 'entity'
+      ? { ...DEFAULT_ENTITY_ITEM,   _id: generateId(existing), entity:   defaultValue }
+      : { ...DEFAULT_TEMPLATE_ITEM, _id: generateId(existing), template: defaultValue };
     const items  = sortItems([...existing, base]);
     this._expandedItemId = base._id;
     this._config = { ...this._config, items };
     this._fireConfig();
     this.updateComplete.then(() => {
-      this.shadowRoot?.querySelector(`[data-item-id="${base._id}"]`)
-        ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      const panel = this.shadowRoot?.querySelector(`[data-item-id="${base._id}"]`);
+      panel?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      panel?.querySelector('chrono-cp-textfield input, chrono-cp-textfield textarea')
+        ?.focus();
     });
   }
 
@@ -1117,8 +1132,8 @@ class ChronoPictureCardEditor extends LitElement {
               const headerText = isEntity
                 ? (item.entity || `Entity ${index + 1}`)
                 : (item.template
-                    ? (item.template.length > 35
-                        ? item.template.slice(0, 35) + '…'
+                    ? (item.template.length > 30
+                        ? item.template.slice(0, 30) + '…'
                         : item.template)
                     : `Template ${index + 1}`);
 
@@ -1202,8 +1217,8 @@ class ChronoPictureCardEditor extends LitElement {
                     ${cpTextField('Padding\nright (px)',  item.padding_right  ?? '', e => this._itemChanged(index, 'padding_right',  e), { type: 'number', step: '1', min: '0' })}
                   </div>
 
-                  <!-- YAML extras textarea -->
-                  <div class="item-content-row">
+                  <!-- YAML extras textarea (hidden, keep for re-enable) -->
+                  <!-- <div class="item-content-row">
                     <div class="text-field">
                       <label>Additional YAML</label>
                       <chrono-cp-textarea
@@ -1212,7 +1227,7 @@ class ChronoPictureCardEditor extends LitElement {
                         @input=${e => this._itemYamlChanged(index, e)}
                       ></chrono-cp-textarea>
                     </div>
-                  </div>
+                  </div> -->
 
                   <!-- Remove button -->
                   <div class="remove-item-row">
@@ -1508,6 +1523,7 @@ class ChronoPictureCardEditor extends LitElement {
       letter-spacing: 0.08em;
       padding: 2px 6px;
       border-radius: 4px;
+      white-space: nowrap;
     }
 
     .item-type-badge.entity {
@@ -1591,8 +1607,8 @@ class ChronoPictureCardEditor extends LitElement {
           ${cpColorPicker('Bottom bar background color', c.bottom_bar_background_color ?? '', e => this._valueChanged('bottom_bar_background_color', e))}
         </div>
 
-        <!-- Card-level YAML textarea -->
-        <div class="image-ratio">
+        <!-- Card-level YAML textarea (hidden, keep for re-enable) -->
+        <!-- <div class="image-ratio">
           <div class="text-field">
             <label>Additional YAML<br><i>tap_action, hold_action, double_tap_action, etc.</i></label>
             <chrono-cp-textarea
@@ -1601,7 +1617,7 @@ class ChronoPictureCardEditor extends LitElement {
               @input=${e => this._cardYamlChanged(e)}
             ></chrono-cp-textarea>
           </div>
-        </div>
+        </div> -->
 
       </ha-expansion-panel>
 
