@@ -6,12 +6,15 @@ import { repeat }                from 'https://unpkg.com/lit@2.0.0/directives/re
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.0.101';
+const CARD_VERSION = '1.0.102';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.0.102: When a new item is added, all other item panels collapse and the new
+//          item's panel expands and scrolls into view. Item panel open/closed
+//          state is now tracked via _expandedItemId.
 // v1.0.101: Editor drag-and-drop now moves items between groups. The item list
 //          is built as dividers + items (all 6 group dividers always shown, even
 //          when empty), so the drag tool's reported position addresses that
@@ -930,8 +933,9 @@ customElements.define('chrono-cp-select', CpSelect);
 // ─── Editor ───────────────────────────────────────────────────────────────────
 class ChronoPictureCardEditor extends LitElement {
   static properties = {
-    hass:    { attribute: false },
-    _config: { state: true },
+    hass:            { attribute: false },
+    _config:         { state: true },
+    _expandedItemId: { state: true },
   };
 
   setConfig(config) {
@@ -1025,8 +1029,13 @@ class ChronoPictureCardEditor extends LitElement {
       ? { ...DEFAULT_ENTITY_ITEM,   _id: generateId(existing) }
       : { ...DEFAULT_TEMPLATE_ITEM, _id: generateId(existing) };
     const items  = sortItems([...existing, base]);
+    this._expandedItemId = base._id;
     this._config = { ...this._config, items };
     this._fireConfig();
+    this.updateComplete.then(() => {
+      this.shadowRoot?.querySelector(`[data-item-id="${base._id}"]`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
   }
 
   _removeItem(index) {
@@ -1116,7 +1125,14 @@ class ChronoPictureCardEditor extends LitElement {
               const extrasYaml = serializeExtrasToYaml(item, UI_ITEM_KEYS);
 
               return html`
-                <ha-expansion-panel outlined>
+                <ha-expansion-panel
+                  outlined
+                  data-item-id="${item._id}"
+                  .expanded=${this._expandedItemId === item._id}
+                  @expanded-changed=${(e) => {
+                    this._expandedItemId = e.detail.value ? item._id : null;
+                  }}
+                >
 
                   <div slot="header" class="item-header-slot">
                     <div class="item-header-content${item.show === false ? ' item-hidden' : ''}">
