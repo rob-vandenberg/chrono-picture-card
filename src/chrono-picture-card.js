@@ -6,12 +6,18 @@ import { repeat }                from 'https://unpkg.com/lit@2.0.0/directives/re
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.0.107';
+const CARD_VERSION = '1.0.108';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.0.108: New item now renders in the preview (restored _fireConfig in
+//          _addItem) and the entity/template field is focused correctly —
+//          focus now awaits the ha-expansion-panel's own updateComplete (the
+//          panel renders its slotted content on its own update cycle when
+//          expanded is set programmatically), instead of guessing timing or
+//          poking the value in by hand. Field value comes from the data binding.
 // v1.0.107: Restore missing value and type bindings on CpTextfield input element
 //          accidentally dropped in 1.0.104 when adding focus() method, causing
 //          all text fields in the editor to show empty since that version.
@@ -1077,14 +1083,19 @@ class ChronoPictureCardEditor extends LitElement {
     this._expandedItemId = base._id;
     this._removedItem    = null;
     this._config = { ...this._config, items };
-    this.updateComplete.then(() => {
+    this._fireConfig();
+
+    // Focus the new item's field only once its panel has rendered its content.
+    // ha-expansion-panel renders the slotted content when `expanded` is set
+    // (via its own update cycle), so await the panel's updateComplete — not the
+    // editor's — before the field exists in the DOM. Value comes from the data
+    // binding; it is not set here.
+    this.updateComplete.then(async () => {
       const panel = this.shadowRoot?.querySelector(`[data-item-id="${base._id}"]`);
-      panel?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      const field = panel?.querySelector('chrono-cp-textfield');
-      if (field) {
-        field.value = defaultValue;
-        field.focus();
-      }
+      if (!panel) return;
+      await panel.updateComplete;
+      panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      panel.querySelector('chrono-cp-textfield')?.focus();
     });
   }
 
