@@ -6,12 +6,15 @@ import { repeat }                from 'https://unpkg.com/lit@2.0.0/directives/re
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.0.103';
+const CARD_VERSION = '1.0.104';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.0.104: Add focus() method to all four chrono-cp-* controls (delegates to
+//          their internal focusable element); after adding a new item the
+//          Entity ID / Template field now correctly receives focus.
 // v1.0.103: Badge word-wrap fix (white-space:nowrap); header text truncated at
 //          30 chars; Additional YAML sections hidden (code kept); new entity
 //          item defaults to first light.* entity (fallback: first entity);
@@ -590,11 +593,13 @@ class CpTextfield extends LitElement {
     }
   `;
 
+  focus() {
+    this.shadowRoot?.querySelector('input')?.focus();
+  }
+
   render() {
     return html`
       <input
-        .value=${live(this.value ?? '')}
-        type=${this.type ?? 'text'}
         step=${this.step ?? ''}
         min=${this.min ?? ''}
         max=${this.max ?? ''}
@@ -650,6 +655,10 @@ class CpTextarea extends LitElement {
       border-bottom: 2px solid var(--error-color, #f44336);
     }
   `;
+
+  focus() {
+    this.shadowRoot?.querySelector('textarea')?.focus();
+  }
 
   render() {
     return html`
@@ -731,6 +740,10 @@ class CpButtonToggleGroup extends LitElement {
   _select(value) {
     this.value = value;
     this.dispatchEvent(new CustomEvent('change', { detail: { value }, bubbles: true, composed: true }));
+  }
+
+  focus() {
+    this.shadowRoot?.querySelector('button')?.focus();
   }
 }
 customElements.define('chrono-cp-button-toggle-group', CpButtonToggleGroup);
@@ -932,6 +945,10 @@ class CpSelect extends LitElement {
       ` : ''}
     `;
   }
+
+  focus() {
+    this.shadowRoot?.querySelector('.combobox-input')?.focus();
+  }
 }
 customElements.define('chrono-cp-select', CpSelect);
 
@@ -1048,8 +1065,7 @@ class ChronoPictureCardEditor extends LitElement {
     this.updateComplete.then(() => {
       const panel = this.shadowRoot?.querySelector(`[data-item-id="${base._id}"]`);
       panel?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      panel?.querySelector('chrono-cp-textfield input, chrono-cp-textfield textarea')
-        ?.focus();
+      panel?.querySelector('chrono-cp-textfield')?.focus();
     });
   }
 
