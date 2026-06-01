@@ -6,12 +6,18 @@ import { repeat }                from 'https://unpkg.com/lit@2.0.0/directives/re
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.0.104';
+const CARD_VERSION = '1.0.105';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.0.105: Remove _fireConfig from _addItem — new items persist only on first
+//          edit; _removeItem replaced with undo pattern — removed item shows
+//          "Undo remove" row in its original position, any other interaction
+//          discards it; fix blank lines between _openPopup/_selectPopupOption;
+//          extract px/em helpers in _itemStyleMap; derive _GROUP_ORDER from
+//          _GROUP_DEFS as single source of truth for group ordering.
 // v1.0.104: Add focus() method to all four chrono-cp-* controls (delegates to
 //          their internal focusable element); after adding a new item the
 //          Entity ID / Template field now correctly receives focus.
@@ -298,13 +304,6 @@ const HORIZONTAL_BADGE_COLORS = {
 const GROUP_DIVIDER_COLOR = '#009ac7';
 
 // ─── sortItems ────────────────────────────────────────────────────────────────
-const _GROUP_ORDER = [
-  'top-left', 'top-center', 'top-right',
-  'bottom-left', 'bottom-center', 'bottom-right',
-];
-
-// Fixed group order + labels for the editor's divider rows. Same order as
-// _GROUP_ORDER. The editor builds its visible list from these.
 const _GROUP_DEFS = [
   { vertical: 'top',    horizontal: 'left',   label: 'Top · Left'      },
   { vertical: 'top',    horizontal: 'center', label: 'Top · Center'    },
@@ -313,6 +312,9 @@ const _GROUP_DEFS = [
   { vertical: 'bottom', horizontal: 'center', label: 'Bottom · Center' },
   { vertical: 'bottom', horizontal: 'right',  label: 'Bottom · Right'  },
 ];
+
+const _GROUP_ORDER = _GROUP_DEFS.map(g => `${g.vertical}-${g.horizontal}`);
+
 function sortItems(items) {
   const key = item => `${item.vertical ?? 'bottom'}-${item.horizontal ?? 'center'}`;
   return [...items].sort((a, b) => _GROUP_ORDER.indexOf(key(a)) - _GROUP_ORDER.indexOf(key(b)));
@@ -958,6 +960,7 @@ class ChronoPictureCardEditor extends LitElement {
     hass:            { attribute: false },
     _config:         { state: true },
     _expandedItemId: { state: true },
+    _removedItem:    { state: true },
   };
 
   setConfig(config) {
@@ -978,6 +981,7 @@ class ChronoPictureCardEditor extends LitElement {
   // ── Card-level value changed ──────────────────────────────────────────────
   _valueChanged(key, e) {
     if (!this._config) return;
+    this._clearUndo();
     const value  = e.target.value ?? e.detail?.value;
     this._config = { ...this._config, [key]: value };
     this._fireConfig();
@@ -1001,6 +1005,7 @@ class ChronoPictureCardEditor extends LitElement {
   // ── Item-level UI field changed ───────────────────────────────────────────
   _itemChanged(index, key, e) {
     if (!this._config) return;
+    this._clearUndo();
     const raw = e.target.value ?? e.detail?.value;
     let value;
     if (NUMERIC_ITEM_KEYS.has(key)) {
@@ -1020,6 +1025,7 @@ class ChronoPictureCardEditor extends LitElement {
   // ── Item-level YAML textarea changed ─────────────────────────────────────
   _itemYamlChanged(index, e) {
     if (!this._config) return;
+    this._clearUndo();
     const text   = e.target.value ?? e.detail?.value ?? '';
     const parsed = parseYamlExtras(text);
     if (parsed === null) return; // invalid YAML — don't save
@@ -1037,6 +1043,7 @@ class ChronoPictureCardEditor extends LitElement {
 
   _itemToggled(index, key, e) {
     if (!this._config) return;
+    this._clearUndo();
     const value      = e.target.checked;
     const items      = [...(this._config.items ?? [])];
     items[index]     = { ...items[index], [key]: value };
@@ -1060,8 +1067,8 @@ class ChronoPictureCardEditor extends LitElement {
       : { ...DEFAULT_TEMPLATE_ITEM, _id: generateId(existing), template: defaultValue };
     const items  = sortItems([...existing, base]);
     this._expandedItemId = base._id;
+    this._removedItem    = null;
     this._config = { ...this._config, items };
-    this._fireConfig();
     this.updateComplete.then(() => {
       const panel = this.shadowRoot?.querySelector(`[data-item-id="${base._id}"]`);
       panel?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -1070,29 +1077,56 @@ class ChronoPictureCardEditor extends LitElement {
   }
 
   _removeItem(index) {
-    const items  = (this._config.items ?? []).filter((_, i) => i !== index);
+    const items = [...(this._config.items ?? [])];
+    this._removedItem = { item: items[index], index };
+    this._config = { ...this._config, items: items.filter((_, i) => i !== index) };
+    this._fireConfig();
+  }
+
+  _undoRemove() {
+    if (!this._removedItem) return;
+    const { item, index } = this._removedItem;
+    const items = [...(this._config.items ?? [])];
+    items.splice(index, 0, item);
+    this._removedItem = null;
     this._config = { ...this._config, items };
     this._fireConfig();
+  }
+
+  _clearUndo() {
+    if (this._removedItem) this._removedItem = null;
   }
 
   // Build the editor's visible list: every group's divider followed by that
   // group's items in array order. All 6 dividers always present. Each item row
   // carries its index within _config.items (the edit handlers address it).
+  // If an item was just removed, an undo row appears at its original position.
   _buildRows(items) {
     const rows = [];
+    let itemCount = 0;
     for (const g of _GROUP_DEFS) {
       rows.push({ type: 'divider', group: g, key: `divider-${g.vertical}-${g.horizontal}` });
       items.forEach((item, itemIndex) => {
         if ((item.vertical ?? 'bottom') === g.vertical && (item.horizontal ?? 'center') === g.horizontal) {
+          // Insert undo row at its original index position
+          if (this._removedItem && itemCount === this._removedItem.index) {
+            rows.push({ type: 'undo', key: 'undo-remove' });
+          }
           rows.push({ type: 'item', item, itemIndex, key: item._id });
+          itemCount++;
         }
       });
+    }
+    // If undo row belongs at the end (was last item)
+    if (this._removedItem && itemCount === this._removedItem.index) {
+      rows.push({ type: 'undo', key: 'undo-remove' });
     }
     return rows;
   }
 
   _itemMoved(e) {
     e.stopPropagation();
+    this._clearUndo();
     const { oldIndex, newIndex } = e.detail;
     const items = [...(this._config.items ?? [])];
     const rows  = this._buildRows(items);
@@ -1136,6 +1170,16 @@ class ChronoPictureCardEditor extends LitElement {
                   <div class="group-divider">
                     <span class="group-divider-label" style="color:${GROUP_DIVIDER_COLOR}">${row.group.label}</span>
                     <div class="group-divider-line" style="background:${GROUP_DIVIDER_COLOR}"></div>
+                  </div>
+                `;
+              }
+
+              if (row.type === 'undo') {
+                return html`
+                  <div class="remove-item-row">
+                    <button class="remove-item-btn" @click=${() => this._undoRemove()}>
+                      Undo remove
+                    </button>
                   </div>
                 `;
               }
@@ -1819,10 +1863,7 @@ class ChronoPictureCard extends LitElement {
     };
   }
 
-
-
-
-  // ── Popup option selected ──────────────────────────────────────────────────────────────────────────
+  // ── Popup option selected ─────────────────────────────────────────────────
   _selectPopupOption(option) {
     const popup = this._popup;
     this._popup = null;
@@ -1842,17 +1883,20 @@ class ChronoPictureCard extends LitElement {
 
   // ── Item style map ────────────────────────────────────────────────────────
   _itemStyleMap(item) {
+    const px  = v => (v !== '' && v != null) ? `${v}px` : undefined;
+    const em  = v => (v !== '' && v != null) ? `${v}em` : undefined;
+    const raw = v => (v !== '' && v != null) ? `${v}`   : undefined;
     return {
       'color':            item.font_color       || undefined,
-      'font-size':        (item.font_size   !== '' && item.font_size   != null) ? `${item.font_size}em` : undefined,
-      'font-weight':      (item.font_weight !== '' && item.font_weight != null) ? `${item.font_weight}` : undefined,
-      'line-height':      (item.line_height !== '' && item.line_height != null) ? `${item.line_height}` : undefined,
-      'border-radius':    (item.border_radius !== '' && item.border_radius != null) ? `${item.border_radius}px` : undefined,
+      'font-size':        em(item.font_size),
+      'font-weight':      raw(item.font_weight),
+      'line-height':      raw(item.line_height),
+      'border-radius':    px(item.border_radius),
       'background-color': item.background_color || undefined,
-      'padding-top':      (item.padding_top    !== '' && item.padding_top    != null) ? `${item.padding_top}px`    : undefined,
-      'padding-bottom':   (item.padding_bottom !== '' && item.padding_bottom != null) ? `${item.padding_bottom}px` : undefined,
-      'padding-left':     (item.padding_left   !== '' && item.padding_left   != null) ? `${item.padding_left}px`   : undefined,
-      'padding-right':    (item.padding_right  !== '' && item.padding_right  != null) ? `${item.padding_right}px`  : undefined,
+      'padding-top':      px(item.padding_top),
+      'padding-bottom':   px(item.padding_bottom),
+      'padding-left':     px(item.padding_left),
+      'padding-right':    px(item.padding_right),
     };
   }
 
