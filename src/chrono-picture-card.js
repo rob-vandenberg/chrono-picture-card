@@ -6,12 +6,45 @@ import { repeat }                from 'https://unpkg.com/lit@2.0.0/directives/re
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '0.4.46';
+const CARD_VERSION = '1.0.101';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.0.101: Editor drag-and-drop now moves items between groups. The item list
+//          is built as dividers + items (all 6 group dividers always shown, even
+//          when empty), so the drag tool's reported position addresses that
+//          combined list directly. On drop, each item takes the group of the
+//          divider above it (an item dropped above the top divider joins the
+//          top-left group); dividers are non-draggable and never written to YAML.
+// v1.0.100: Architectural rewrite — stop re-implementing Home Assistant. Tap
+//          handling now routes through a vendored copy of HA's own handleAction
+//          (faithful to current HA source) via _handleAction, so every action
+//          including fire-dom-event (→ ll-custom, HA's extension point for
+//          browser_mod and other add-ons) is forwarded to HA unfiltered; removed
+//          the hand-rolled _fireAction switch and client-side _resolveDataTemplates
+//          (HA does not pre-resolve call-service data — use a script); all image
+//          source types (camera/url/entity) now render through hui-image instead
+//          of a raw <img> + manual image_proxy URL; entity items now use
+//          ha-state-icon (HA icon + state colour) instead of the private
+//          DOMAIN_ICON_MAP/domainIcon and ACTIVE_STATES/isStateActive; entity
+//          default tap action is more-info (removed DOMAINS_TOGGLE/
+//          defaultTapAction); removed parseAspectRatio (hui-image handles it);
+//          input-select-popup remains card-owned. Custom chrono-cp-* UI controls
+//          unchanged (HA-recommended for third-party cards). NOTE: assist and
+//          action confirmation are not implemented — both require internal HA
+//          dialogs an externally-loaded card cannot invoke.
+// v0.5.50: Harden _resolveDataTemplates against failed/rejected template
+//          subscriptions — fall back to the raw value instead of hanging;
+//          reset _itemValues in _setupSubscriptions to clear stale template
+//          text on resubscribe; defer numeric-field commit until the typed
+//          text matches its canonical form so live() no longer clobbers
+//          in-progress decimals (e.g. 1.05); derive a swatch-safe hex in
+//          cpColorPicker (handles #rrggbbaa and non-hex); build the
+//          item→index Map once per render() instead of once per zone; gate
+//          requestUpdate() on referenced-state changes via _hassShouldRender();
+//          extract shared migrateConfig() used by both setConfig paths
 // v0.4.46: Fire config-changed after migration in editor setConfig so HA
 //          receives and stores the migrated items array immediately (was only
 //          updated in memory, leaving the YAML view showing the old arrays)
@@ -142,28 +175,6 @@ console.info(
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const DOMAINS_TOGGLE = new Set([
-  'automation', 'cover', 'fan', 'group', 'humidifier', 'input_boolean',
-  'light', 'media_player', 'remote', 'script', 'switch', 'timer', 'vacuum',
-]);
-
-const ACTIVE_STATES = ['on', 'open', 'opening', 'unlocked', 'active', 'home', 'playing'];
-
-const DEFAULT_ENTITY_ICON = 'mdi:circle';
-
-const DOMAIN_ICON_MAP = {
-  light:         'mdi:lightbulb',
-  switch:        'mdi:toggle-switch',
-  sensor:        'mdi:eye',
-  script:        'mdi:script-text',
-  automation:    'mdi:robot',
-  input_boolean: 'mdi:toggle-switch',
-  cover:         'mdi:window-shutter',
-  fan:           'mdi:fan',
-  media_player:  'mdi:cast',
-  camera:        'mdi:camera',
-};
-
 const DEFAULT_ITEM = {
   _id:              '',
   show:             true,
@@ -280,6 +291,17 @@ const _GROUP_ORDER = [
   'top-left', 'top-center', 'top-right',
   'bottom-left', 'bottom-center', 'bottom-right',
 ];
+
+// Fixed group order + labels for the editor's divider rows. Same order as
+// _GROUP_ORDER. The editor builds its visible list from these.
+const _GROUP_DEFS = [
+  { vertical: 'top',    horizontal: 'left',   label: 'Top · Left'      },
+  { vertical: 'top',    horizontal: 'center', label: 'Top · Center'    },
+  { vertical: 'top',    horizontal: 'right',  label: 'Top · Right'     },
+  { vertical: 'bottom', horizontal: 'left',   label: 'Bottom · Left'   },
+  { vertical: 'bottom', horizontal: 'center', label: 'Bottom · Center' },
+  { vertical: 'bottom', horizontal: 'right',  label: 'Bottom · Right'  },
+];
 function sortItems(items) {
   const key = item => `${item.vertical ?? 'bottom'}-${item.horizontal ?? 'center'}`;
   return [...items].sort((a, b) => _GROUP_ORDER.indexOf(key(a)) - _GROUP_ORDER.indexOf(key(b)));
@@ -291,6 +313,34 @@ function generateId(existingItems = []) {
   let id;
   do { id = Math.random().toString(16).slice(2, 10); } while (existing.has(id));
   return id;
+}
+
+// ─── migrateConfig ────────────────────────────────────────────────────────────
+// Migrate legacy left_items/center_items/right_items into a single items array
+// and backfill a stable _id on any item missing one. Returns the (possibly new)
+// config and whether anything changed.
+function migrateConfig(config) {
+  let migrated = false;
+
+  if (config.left_items || config.center_items || config.right_items) {
+    const items = sortItems([
+      ...(config.left_items   ?? []).map(i => ({ ...i, horizontal: 'left'   })),
+      ...(config.center_items ?? []).map(i => ({ ...i, horizontal: 'center' })),
+      ...(config.right_items  ?? []).map(i => ({ ...i, horizontal: 'right'  })),
+    ]);
+    const { left_items, center_items, right_items, ...rest } = config;
+    config   = { ...rest, items };
+    migrated = true;
+  }
+
+  if (config.items?.some(i => !i._id)) {
+    const withIds = [];
+    for (const i of config.items) withIds.push(i._id ? i : { ...i, _id: generateId(config.items.concat(withIds)) });
+    config   = { ...config, items: withIds };
+    migrated = true;
+  }
+
+  return { config, migrated };
 }
 
 // ─── YAML helpers ─────────────────────────────────────────────────────────────
@@ -319,40 +369,89 @@ function parseYamlExtras(text) {
   }
 }
 
-// ─── Domain helpers ───────────────────────────────────────────────────────────
-function getDomain(entityId) {
-  return entityId?.split('.')?.[0] ?? '';
+// ─── Home Assistant action compatibility ────────────────────────────────────────
+// An externally-loaded card cannot import HA's internal handleAction/fireEvent.
+// These are faithful copies of Home Assistant's own implementations so the card
+// forwards actions to HA exactly as a built-in card does — including
+// fire-dom-event, which HA dispatches as the "ll-custom" event that browser_mod
+// and other add-ons listen for. The card adds no allowlist of its own: any action
+// HA understands works, and fire-dom-event is HA's extension point for actions
+// provided by third-party add-ons.
+
+function fireEvent(node, type, detail = {}, options = {}) {
+  const event = new Event(type, {
+    bubbles:    options.bubbles    ?? true,
+    cancelable: Boolean(options.cancelable),
+    composed:   options.composed   ?? true,
+  });
+  event.detail = detail;
+  node.dispatchEvent(event);
+  return event;
 }
 
-function defaultTapAction(domain) {
-  return DOMAINS_TOGGLE.has(domain) ? { action: 'toggle' } : { action: 'more-info' };
+function navigate(path, options = {}) {
+  if (options.replace) {
+    history.replaceState(null, '', path);
+  } else {
+    history.pushState(null, '', path);
+  }
+  fireEvent(window, 'location-changed', { replace: options.replace ?? false });
 }
 
-function isStateActive(stateObj) {
-  if (!stateObj) return false;
-  const s = stateObj.state;
-  return ACTIVE_STATES.includes(s);
+function toggleEntity(hass, entityId) {
+  if (!entityId) return;
+  hass.callService('homeassistant', 'toggle', { entity_id: entityId });
 }
 
-const DOMAIN_ICON_MAP_EXTENDED = {
-  ...DOMAIN_ICON_MAP,
-  binary_sensor: 'mdi:radiobox-blank', // device_class override applied inline below
-};
+// Faithful copy of HA's handleAction. Selects the action config for the given
+// interaction (tap/hold/double_tap), defaults to more-info, and routes it.
+// Unknown actions do nothing — matching HA, not filtering. assist and action
+// confirmation are intentionally not handled: both need internal HA dialogs that
+// an externally-loaded card cannot open.
+function handleAction(node, hass, config, action) {
+  let actionConfig;
+  if (action === 'double_tap' && config.double_tap_action) {
+    actionConfig = config.double_tap_action;
+  } else if (action === 'hold' && config.hold_action) {
+    actionConfig = config.hold_action;
+  } else if (action === 'tap' && config.tap_action) {
+    actionConfig = config.tap_action;
+  }
+  if (!actionConfig) actionConfig = { action: 'more-info' };
 
-function domainIcon(domain, stateObj) {
-  const dc   = stateObj?.attributes?.device_class;
-  const icon = (domain === 'binary_sensor' && dc) ? `mdi:${dc}` : DOMAIN_ICON_MAP_EXTENDED[domain];
-  return stateObj?.attributes?.icon ?? icon ?? DEFAULT_ENTITY_ICON;
-}
-
-// ─── Aspect ratio helper ──────────────────────────────────────────────────────
-function parseAspectRatio(ratio) {
-  if (!ratio) return null;
-  const m = String(ratio).match(/^(\d+(?:\.\d+)?)\s*[x:\/]\s*(\d+(?:\.\d+)?)$/i);
-  if (m) return (parseFloat(m[1]) / parseFloat(m[2]) * 100).toFixed(4) + '%';
-  const n = parseFloat(ratio);
-  if (!isNaN(n)) return (n * 100).toFixed(4) + '%';
-  return null;
+  switch (actionConfig.action) {
+    case 'none':
+      break;
+    case 'more-info':
+      fireEvent(node, 'hass-more-info', { entityId: actionConfig.entity ?? config.entity });
+      break;
+    case 'navigate':
+      if (actionConfig.navigation_path) {
+        navigate(actionConfig.navigation_path, { replace: actionConfig.navigation_replace });
+      }
+      break;
+    case 'url':
+      if (actionConfig.url_path) window.open(actionConfig.url_path, '_blank');
+      break;
+    case 'toggle':
+      toggleEntity(hass, config.entity);
+      break;
+    case 'perform-action':
+    case 'call-service': {
+      const serviceName = actionConfig.perform_action ?? actionConfig.service;
+      if (!serviceName) break;
+      const [domain, service] = serviceName.split('.', 2);
+      if (!domain || !service) break;
+      hass.callService(domain, service, actionConfig.data ?? actionConfig.service_data, actionConfig.target);
+      break;
+    }
+    case 'fire-dom-event':
+      fireEvent(node, 'll-custom', actionConfig);
+      break;
+    default:
+      // Unknown action: do nothing, exactly as HA does.
+      break;
+  }
 }
 
 // ─── cpParseNumber ────────────────────────────────────────────────────────────
@@ -361,7 +460,12 @@ function cpParseNumber(raw) {
   if (v === '-' || v === '-0' || v.endsWith('.')) return null;
   if (v === '')                                    return '';
   const n = parseFloat(v);
-  return isNaN(n) ? null : n;
+  if (isNaN(n)) return null;
+  // Defer commit while the typed text has not yet reached its canonical
+  // numeric form (e.g. "1.0", "1.05" mid-typing), so the live() binding does
+  // not overwrite in-progress decimal entry.
+  if (String(n) !== v) return null;
+  return n;
 }
 
 // ─── Editor helper functions ──────────────────────────────────────────────────
@@ -391,8 +495,15 @@ function cpToggleField(label, checked, onChange, extraClass = '') {
   `;
 }
 
+function toSwatchHex(value) {
+  const v = String(value ?? '').trim();
+  if (/^#[0-9a-fA-F]{3}$/.test(v) || /^#[0-9a-fA-F]{6}$/.test(v)) return v;
+  if (/^#[0-9a-fA-F]{8}$/.test(v)) return v.slice(0, 7); // drop alpha; color input has none
+  return '#000000';                                       // named/rgb()/empty → neutral
+}
+
 function cpColorPicker(label, value, onChange) {
-  const swatchValue = value || '#000000';
+  const swatchValue = toSwatchHex(value);
   return html`
     <div class="text-field">
       <label>${unsafeHTML(label)}</label>
@@ -824,27 +935,8 @@ class ChronoPictureCardEditor extends LitElement {
   };
 
   setConfig(config) {
-    let migrated = false;
-
-    // Migrate old left_items/center_items/right_items to single items array
-    if (config.left_items || config.center_items || config.right_items) {
-      const migrated_items = sortItems([
-        ...(config.left_items   ?? []).map(i => ({ ...i, horizontal: 'left'   })),
-        ...(config.center_items ?? []).map(i => ({ ...i, horizontal: 'center' })),
-        ...(config.right_items  ?? []).map(i => ({ ...i, horizontal: 'right'  })),
-      ]);
-      const { left_items, center_items, right_items, ...rest } = config;
-      config   = { ...rest, items: migrated_items };
-      migrated = true;
-    }
-    // Assign _id to any item missing one
-    if (config.items?.some(i => !i._id)) {
-      const withIds = [];
-      for (const i of config.items) withIds.push(i._id ? i : { ...i, _id: generateId(config.items.concat(withIds)) });
-      config   = { ...config, items: withIds };
-      migrated = true;
-    }
-    this._config = config;
+    const { config: migratedConfig, migrated } = migrateConfig(config);
+    this._config = migratedConfig;
     if (migrated) this._fireConfig();
   }
 
@@ -943,12 +1035,40 @@ class ChronoPictureCardEditor extends LitElement {
     this._fireConfig();
   }
 
+  // Build the editor's visible list: every group's divider followed by that
+  // group's items in array order. All 6 dividers always present. Each item row
+  // carries its index within _config.items (the edit handlers address it).
+  _buildRows(items) {
+    const rows = [];
+    for (const g of _GROUP_DEFS) {
+      rows.push({ type: 'divider', group: g, key: `divider-${g.vertical}-${g.horizontal}` });
+      items.forEach((item, itemIndex) => {
+        if ((item.vertical ?? 'bottom') === g.vertical && (item.horizontal ?? 'center') === g.horizontal) {
+          rows.push({ type: 'item', item, itemIndex, key: item._id });
+        }
+      });
+    }
+    return rows;
+  }
+
   _itemMoved(e) {
     e.stopPropagation();
     const { oldIndex, newIndex } = e.detail;
-    const items  = [...(this._config.items ?? [])];
-    items.splice(newIndex, 0, items.splice(oldIndex, 1)[0]);
-    this._config = { ...this._config, items: sortItems(items) };
+    const items = [...(this._config.items ?? [])];
+    const rows  = this._buildRows(items);
+    if (!rows[oldIndex] || rows[oldIndex].type !== 'item') return; // dividers don't move
+
+    rows.splice(newIndex, 0, rows.splice(oldIndex, 1)[0]);
+
+    // Each item takes the group of the nearest divider above it. An item that
+    // ends up above the first divider falls into the first group (top-left).
+    let group = _GROUP_DEFS[0];
+    const newItems = [];
+    for (const row of rows) {
+      if (row.type === 'divider') { group = row.group; continue; }
+      newItems.push({ ...row.item, vertical: group.vertical, horizontal: group.horizontal });
+    }
+    this._config = { ...this._config, items: newItems };
     this._fireConfig();
   }
 
@@ -963,19 +1083,25 @@ class ChronoPictureCardEditor extends LitElement {
   // ─── Items panel ───────────────────────────────────────────────────────────
   _renderItemsPanel() {
     const items = this._config?.items ?? [];
-
-    const groupLabel = item => {
-      const v = (item.vertical   ?? 'bottom') === 'top' ? 'Top' : 'Bottom';
-      const h = { left: 'Left', center: 'Center', right: 'Right' }[item.horizontal ?? 'center'];
-      return `${v} · ${h}`;
-    };
+    const rows  = this._buildRows(items);
 
     return html`
       <ha-expansion-panel header="Items configuration" outlined>
 
         <ha-sortable handle-selector=".handle" @item-moved=${(e) => this._itemMoved(e)}>
           <div class="items-list">
-            ${repeat(items, item => item._id, (item, index) => {
+            ${repeat(rows, row => row.key, (row) => {
+              if (row.type === 'divider') {
+                return html`
+                  <div class="group-divider">
+                    <span class="group-divider-label" style="color:${GROUP_DIVIDER_COLOR}">${row.group.label}</span>
+                    <div class="group-divider-line" style="background:${GROUP_DIVIDER_COLOR}"></div>
+                  </div>
+                `;
+              }
+
+              const item       = row.item;
+              const index      = row.itemIndex;
               const isEntity   = 'entity'   in item;
               const typeLabel  = isEntity ? 'Entity' : 'Template';
               const typeClass  = isEntity ? 'entity' : 'template';
@@ -989,17 +1115,7 @@ class ChronoPictureCardEditor extends LitElement {
 
               const extrasYaml = serializeExtrasToYaml(item, UI_ITEM_KEYS);
 
-              const prevItem   = items[index - 1];
-              const showDivider = index === 0 || groupLabel(item) !== groupLabel(prevItem);
-
               return html`
-                ${showDivider ? html`
-                  <div class="group-divider">
-                    <span class="group-divider-label" style="color:${GROUP_DIVIDER_COLOR}">${groupLabel(item)}</span>
-                    <div class="group-divider-line" style="background:${GROUP_DIVIDER_COLOR}"></div>
-                  </div>
-                ` : ''}
-
                 <ha-expansion-panel outlined>
 
                   <div slot="header" class="item-header-slot">
@@ -1517,37 +1633,40 @@ class ChronoPictureCard extends LitElement {
   }
 
   set hass(hass) {
-    const prevConnection = this._hass?.connection;
+    const prev           = this._hass;
+    const prevConnection = prev?.connection;
     this._hass = hass;
     if (this._config) {
       if (hass.connection !== prevConnection || !this._subscribed) {
         this._setupSubscriptions();
       }
     }
-    this.requestUpdate();
+    if (this._hassShouldRender(prev, hass)) this.requestUpdate();
   }
 
   get hass() {
     return this._hass;
   }
 
+  // ── Decide whether a hass update affects anything this card renders ─────────
+  // Template item values arrive via _itemValues (reactive state) and trigger
+  // their own update, so they are intentionally not considered here.
+  _hassShouldRender(prev, next) {
+    if (!prev || !next) return true;
+    const c = this._config;
+    if (!c) return true;
+    const sourceType = c.image_source_type ?? (c.camera_image ? 'camera' : (c.image_entity ? 'entity' : 'url'));
+    if (sourceType === 'camera' && c.camera_image) return true; // hui-image needs fresh hass
+    if (prev.locale !== next.locale || prev.formatEntityState !== next.formatEntityState) return true;
+    const ids = new Set();
+    if (c.image_entity) ids.add(c.image_entity);
+    for (const item of c.items ?? []) if (item.entity) ids.add(item.entity);
+    for (const id of ids) if (prev.states?.[id] !== next.states?.[id]) return true;
+    return false;
+  }
+
   setConfig(config) {
-    // Migrate old left_items/center_items/right_items to single items array
-    if (config.left_items || config.center_items || config.right_items) {
-      const migrated = sortItems([
-        ...(config.left_items   ?? []).map(i => ({ ...i, horizontal: 'left'   })),
-        ...(config.center_items ?? []).map(i => ({ ...i, horizontal: 'center' })),
-        ...(config.right_items  ?? []).map(i => ({ ...i, horizontal: 'right'  })),
-      ]);
-      const { left_items, center_items, right_items, ...rest } = config;
-      config = { ...rest, items: migrated };
-    }
-    // Assign _id to any item missing one
-    if (config.items?.some(i => !i._id)) {
-      const withIds = [];
-      for (const i of config.items) withIds.push(i._id ? i : { ...i, _id: generateId(config.items.concat(withIds)) });
-      config = { ...config, items: withIds };
-    }
+    ({ config } = migrateConfig(config));
 
     let needsResubscribe = !this._subscribed;
 
@@ -1584,6 +1703,7 @@ class ChronoPictureCard extends LitElement {
 
   _setupSubscriptions() {
     this._teardownSubscriptions();
+    this._itemValues = {};
 
     const sub = (template, callback) => {
       const tmpl = String(template);
@@ -1621,120 +1741,55 @@ class ChronoPictureCard extends LitElement {
   }
 
   // ── Action handling ───────────────────────────────────────────────────────
-  _fireAction(entityId, action) {
-    if (!action?.action || action.action === 'none') return;
-    switch (action.action) {
-      case 'toggle':
-        if (entityId) this._hass.callService('homeassistant', 'toggle', { entity_id: entityId });
-        break;
-      case 'more-info':
-        this.dispatchEvent(new CustomEvent('hass-more-info', {
-          detail:   { entityId: entityId || this._config.entity },
-          bubbles:  true,
-          composed: true,
-        }));
-        break;
-      case 'navigate':
-        history.pushState(null, '', action.navigation_path);
-        this.dispatchEvent(new CustomEvent('location-changed', { bubbles: true, composed: true }));
-        break;
-      case 'call-service': {
-        const [domain, service] = (action.service || '').split('.');
-        if (domain && service) {
-          // Resolve any Jinja2 templates in data values server-side, then call
-          this._resolveDataTemplates(action.data || {}).then(resolvedData => {
-            this._hass.callService(domain, service, resolvedData);
-          });
-        }
-        break;
-      }
-      case 'url':
-        if (action.url_path) window.open(action.url_path, '_blank');
-        break;
-      case 'input-select-popup': {
-        const popupEntity = action.entity;
-        if (!popupEntity) break;
-        const stateObj = this._hass.states[popupEntity];
-        if (!stateObj) break;
-        this._popup = {
-          entity:    popupEntity,
-          options:   stateObj.attributes.options ?? [],
-          current:   stateObj.state,
-          on_select: action.on_select ?? null,
-        };
-        break;
-      }
-      default:
-        break;
+  // Forward to HA's action handler. The only action the card owns is
+  // input-select-popup (custom UI with no HA equivalent); everything else,
+  // including fire-dom-event and any add-on action, goes straight to HA.
+  _handleAction(config, action = 'tap') {
+    if (!this._hass) return;
+    const actionConfig =
+      (action === 'double_tap' && config.double_tap_action) ? config.double_tap_action :
+      (action === 'hold'       && config.hold_action)       ? config.hold_action       :
+      config.tap_action;
+    if (actionConfig?.action === 'input-select-popup') {
+      this._openPopup(actionConfig);
+      return;
     }
+    handleAction(this, this._hass, config, action);
   }
 
-  // ── Resolve {{ }} templates in data values via server-side render_template ──
-  async _resolveDataTemplates(data) {
-    const entries      = Object.entries(data);
-    const templateKeys = entries.filter(([, v]) => typeof v === 'string' && v.includes('{{'));
-    if (!templateKeys.length) return data;
-
-    const resolved = {};
-    for (const [key, val] of entries) {
-      if (!(typeof val === 'string' && val.includes('{{'))) resolved[key] = val;
-    }
-
-    // Resolve each template key server-side (one-shot subscribeMessage)
-    await Promise.all(templateKeys.map(([key, tmpl]) =>
-      new Promise((resolve) => {
-        const unsubPromise = this._hass.connection.subscribeMessage(
-          (msg) => {
-            resolved[key] = msg.result;
-            unsubPromise.then(fn => fn());
-            resolve();
-          },
-          { type: 'render_template', template: tmpl }
-        );
-      })
-    ));
-
-    return resolved;
+  // ── input-select-popup (card-owned UI feature) ─────────────────────────────
+  _openPopup(action) {
+    const entity = action.entity;
+    if (!entity) return;
+    const stateObj = this._hass.states[entity];
+    if (!stateObj) return;
+    this._popup = {
+      entity,
+      options:   stateObj.attributes.options ?? [],
+      current:   stateObj.state,
+      on_select: action.on_select ?? null,
+    };
   }
 
 
 
 
   // ── Popup option selected ──────────────────────────────────────────────────────────────────────────
-  async _selectPopupOption(option) {
+  _selectPopupOption(option) {
     const popup = this._popup;
-    this._popup  = null;
+    this._popup = null;
+    if (!popup || !this._hass) return;
 
-    if (!popup.on_select) {
-      // No on_select action — just set the input_select and done
-      this._hass.callService('input_select', 'select_option', {
-        entity_id: popup.entity,
-        option,
-      });
-      return;
+    // Set the input_select first.
+    this._hass.callService('input_select', 'select_option', {
+      entity_id: popup.entity,
+      option,
+    });
+
+    // Then forward any configured on_select action to HA, unchanged.
+    if (popup.on_select) {
+      handleAction(this, this._hass, { tap_action: popup.on_select, entity: popup.entity }, 'tap');
     }
-
-    const action = { ...popup.on_select };
-
-    if (action.data) {
-      // Fire select_option first (no await), then resolve templates server-side.
-      // WebSocket sequential processing guarantees render_template runs after
-      // the state update, so templates see the newly selected option.
-      this._hass.callService('input_select', 'select_option', {
-        entity_id: popup.entity,
-        option,
-      });
-      action.data = await this._resolveDataTemplates(action.data);
-    } else {
-      // No data — just set input_select then fire action
-      this._hass.callService('input_select', 'select_option', {
-        entity_id: popup.entity,
-        option,
-      });
-    }
-
-    if (!this._hass) return;
-    this._fireAction(null, action);
   }
 
   // ── Item style map ────────────────────────────────────────────────────────
@@ -1764,7 +1819,7 @@ class ChronoPictureCard extends LitElement {
         <span
           class="bar-template-item${hasTap ? ' clickable' : ''}"
           style=${styleMap(this._itemStyleMap(item))}
-          @click=${hasTap ? () => this._fireAction(null, item.tap_action) : undefined}
+          @click=${hasTap ? () => this._handleAction(item) : undefined}
         >${value}</span>
       `;
     }
@@ -1776,10 +1831,7 @@ class ChronoPictureCard extends LitElement {
           <span class="bar-entity-missing" title="Entity not found: ${item.entity}">!</span>
         `;
       }
-      const domain    = getDomain(item.entity);
-      const active    = isStateActive(stateObj);
-      const icon      = item.icon || domainIcon(domain, stateObj);
-      const tapAction = item.tap_action || defaultTapAction(domain);
+      const itemConfig = { ...item, entity: item.entity };
       const stateLabel = item.show_state
         ? (item.attribute
             ? `${item.prefix ?? ''}${stateObj.attributes?.[item.attribute] ?? ''}${item.suffix ?? ''}`
@@ -1790,12 +1842,16 @@ class ChronoPictureCard extends LitElement {
 
       return html`
         <div
-          class="bar-entity-item${active ? ' state-on' : ''}"
+          class="bar-entity-item"
           style=${styleMap(this._itemStyleMap(item))}
           title="${stateObj.attributes.friendly_name ?? item.entity}: ${stateObj.state}"
-          @click=${(e) => { e.stopPropagation(); this._fireAction(item.entity, tapAction); }}
+          @click=${(e) => { e.stopPropagation(); this._handleAction(itemConfig); }}
         >
-          <ha-icon .icon=${icon}></ha-icon>
+          <ha-state-icon
+            .hass=${this._hass}
+            .stateObj=${stateObj}
+            .icon=${item.icon || undefined}
+          ></ha-state-icon>
           ${item.show_state ? html`<span class="entity-state-label">${stateLabel}</span>` : ''}
         </div>
       `;
@@ -1805,9 +1861,8 @@ class ChronoPictureCard extends LitElement {
   }
 
   // ── Render a bar zone ─────────────────────────────────────────────────────
-  _renderZone(horizontal, vertical) {
+  _renderZone(horizontal, vertical, indexOf) {
     const allItems = this._config?.items ?? [];
-    const indexOf  = new Map(allItems.map((it, i) => [it, i]));
     const items    = allItems.filter(item =>
       (item.horizontal ?? 'center') === horizontal &&
       (item.vertical   ?? 'bottom') === vertical
@@ -1841,20 +1896,6 @@ class ChronoPictureCard extends LitElement {
       display: block;
       width: 100%;
       pointer-events: none;
-    }
-    .image-container img {
-      display: block;
-      width: 100%;
-      pointer-events: none;
-    }
-    .image-container.has-ratio {
-      height: 0;
-    }
-    .image-container.has-ratio img {
-      position: absolute;
-      top: 0;
-      left: 0;
-      height: 100%;
     }
     .bar {
       position: absolute;
@@ -1894,13 +1935,9 @@ class ChronoPictureCard extends LitElement {
       flex-direction: column;
       align-items: center;
       cursor: pointer;
-      color: var(--ha-picture-icon-button-color, #a9a9a9);
       min-width: 40px;
     }
-    .bar-entity-item.state-on {
-      color: var(--ha-picture-icon-button-on-color, white);
-    }
-    .bar-entity-item ha-icon {
+    .bar-entity-item ha-state-icon {
       --mdc-icon-size: 24px;
     }
     .entity-state-label {
@@ -1976,22 +2013,22 @@ class ChronoPictureCard extends LitElement {
     if (!this._config || !this._hass) return html``;
 
     const c             = this._config;
-    const aspectPadding = parseAspectRatio(c.aspect_ratio);
     const fitMode       = c.fit_mode        || 'fill';
     const objPosition   = c.object_position || 'center';
     const sourceType    = c.image_source_type ?? (c.camera_image ? 'camera' : (c.image_entity ? 'entity' : 'url'));
-    const useCamera     = sourceType === 'camera' && !!c.camera_image;
 
-    // Resolve image URL
-    let imageUrl = c.image || '';
-    if (c.image_entity) {
-      const stateObj = this._hass.states[c.image_entity];
-      const domain   = getDomain(c.image_entity);
-      if (domain === 'image' && stateObj) {
-        imageUrl = `/api/image_proxy/${c.image_entity}?token=${stateObj.attributes.access_token}&time=${stateObj.last_updated}`;
-      } else if (domain === 'person' && stateObj?.attributes?.entity_picture) {
-        imageUrl = stateObj.attributes.entity_picture;
-      }
+    // hui-image handles all three source types and aspect ratio internally:
+    //   camera → .cameraImage / .cameraView
+    //   entity → .entity (image, person, etc. — proxy/token handled by HA)
+    //   url    → .image
+    const imageProps = {};
+    if (sourceType === 'camera' && c.camera_image) {
+      imageProps.cameraImage = c.camera_image;
+      imageProps.cameraView  = c.camera_view;
+    } else if (sourceType === 'entity' && c.image_entity) {
+      imageProps.entity = c.image_entity;
+    } else {
+      imageProps.image = c.image || '';
     }
 
     const imgStyles = {
@@ -2001,53 +2038,38 @@ class ChronoPictureCard extends LitElement {
 
     const isClickable = c.tap_action?.action && c.tap_action.action !== 'none';
 
-    // For camera path: hui-image handles aspect ratio internally via .aspectRatio.
-    // Do NOT apply has-ratio / padding-bottom on the container — it conflicts.
-    // For static image path: use the padding-bottom trick on the container.
     const containerClass = [
       'image-container',
-      !useCamera && aspectPadding ? 'has-ratio' : '',
       isClickable ? 'clickable' : '',
     ].filter(Boolean).join(' ');
 
-    const containerStyle = (!useCamera && aspectPadding)
-      ? `padding-bottom: ${aspectPadding};`
-      : '';
+    // Build item→index map once; _renderZone uses it instead of rebuilding per zone.
+    const itemIndex = new Map((c.items ?? []).map((it, i) => [it, i]));
 
     return html`
       <ha-card>
         <div
           class="${containerClass}"
-          style="${containerStyle}"
-          @click=${() => this._fireAction(c.entity, c.tap_action)}
+          @click=${() => this._handleAction(c)}
         >
-          ${useCamera
-            ? html`
-                <hui-image
-                  .hass=${this._hass}
-                  .cameraImage=${c.camera_image}
-                  .cameraView=${c.camera_view}
-                  .fitMode=${fitMode}
-                  .aspectRatio=${c.aspect_ratio}
-                  style=${styleMap(imgStyles)}
-                ></hui-image>
-              `
-            : html`
-                <img
-                  src="${imageUrl}"
-                  alt=""
-                  style=${styleMap(imgStyles)}
-                />
-              `
-          }
+          <hui-image
+            .hass=${this._hass}
+            .entity=${imageProps.entity}
+            .image=${imageProps.image}
+            .cameraImage=${imageProps.cameraImage}
+            .cameraView=${imageProps.cameraView}
+            .fitMode=${fitMode}
+            .aspectRatio=${c.aspect_ratio}
+            style=${styleMap(imgStyles)}
+          ></hui-image>
         </div>
 
         <div class="bar bar-top" style=${styleMap({'background-color': c.top_bar_background_color || undefined})}>
-          ${['left', 'center', 'right'].map(h => this._renderZone(h, 'top'))}
+          ${['left', 'center', 'right'].map(h => this._renderZone(h, 'top', itemIndex))}
         </div>
 
         <div class="bar bar-bottom" style=${styleMap({'background-color': c.bottom_bar_background_color || undefined})}>
-          ${['left', 'center', 'right'].map(h => this._renderZone(h, 'bottom'))}
+          ${['left', 'center', 'right'].map(h => this._renderZone(h, 'bottom', itemIndex))}
         </div>
 
         ${this._popup ? html`
