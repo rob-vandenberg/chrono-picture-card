@@ -1,3 +1,16 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+
+# Virtual environments
+.env
+venv/
+.venv/
+
 # OS generated files
 .DS_Store
 Thumbs.db
@@ -14,3 +27,7 @@ github/
 *.ai
 *.psd
 *.bat
+
+# IDE
+.vscode/
+.idea/
