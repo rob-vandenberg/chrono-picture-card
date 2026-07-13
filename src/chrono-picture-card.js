@@ -6,12 +6,24 @@ import { repeat }                from 'https://unpkg.com/lit@2.0.0/directives/re
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.0.112';
+const CARD_VERSION = '1.0.300';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.0.300: Added self-healing height for collapsed/indefinite parent containers
+//          (e.g. broken grid-layout rows, bare card in editor preview). :host now
+//          sets aspect-ratio as a fallback that only activates when height:100%
+//          cannot resolve against the actual parent (CSS-native behavior — no
+//          effect when a real parent height exists). Fallback ratio is measured
+//          from the actual rendered video/img element's native dimensions via a
+//          recursive shadow-DOM search (any depth, any HA-internal structure),
+//          defaulting to 16/9 before measurement completes or if no media is
+//          found. Only applies when aspect_ratio is not explicitly configured.
+//          Superseded and removes the need for the v1.0.200 preview/min-height
+//          hack (not carried forward from this base — this version is built on
+//          v1.0.112, not v1.0.200).
 // v1.0.112: Fixed css styling
 // v1.0.111: Added height: 100%; to :host
 // v1.0.109: Fixed bug with black bar at bottom of camera feed.
@@ -1721,9 +1733,10 @@ customElements.define('chrono-picture-card-editor', ChronoPictureCardEditor);
 // ─── Card ─────────────────────────────────────────────────────────────────────
 class ChronoPictureCard extends LitElement {
   static properties = {
-    _config:     { attribute: false },
-    _itemValues: { state: true },
-    _popup:      { state: true },
+    _config:              { attribute: false },
+    _itemValues:          { state: true },
+    _popup:               { state: true },
+    _measuredAspectRatio: { state: true },
   };
 
   static getCardSize() {
@@ -1744,12 +1757,15 @@ class ChronoPictureCard extends LitElement {
 
   constructor() {
     super();
-    this._config          = null;
-    this._hass            = null;
-    this._itemValues      = {};
-    this._templateUnsubs  = [];
-    this._subscribed      = false;
-    this._popup           = null;
+    this._config              = null;
+    this._hass                = null;
+    this._itemValues          = {};
+    this._templateUnsubs      = [];
+    this._subscribed          = false;
+    this._popup               = null;
+    this._measuredAspectRatio = null;
+    this._aspectSourceKey     = null;
+    this._aspectListenerAttached = false;
   }
 
   set hass(hass) {
@@ -1807,6 +1823,22 @@ class ChronoPictureCard extends LitElement {
     if (this._hass && needsResubscribe) {
       this._setupSubscriptions();
     }
+
+    // Re-measure the fallback aspect ratio if the actual media source changed
+    // (switching cameras/images should not keep a stale measured ratio around).
+    const sourceType = config.image_source_type ?? (config.camera_image ? 'camera' : (config.image_entity ? 'entity' : 'url'));
+    const newSourceKey = JSON.stringify({
+      sourceType,
+      camera_image: config.camera_image,
+      camera_view:  config.camera_view,
+      image:        config.image,
+      image_entity: config.image_entity,
+    });
+    if (newSourceKey !== this._aspectSourceKey) {
+      this._aspectSourceKey        = newSourceKey;
+      this._measuredAspectRatio    = null;
+      this._aspectListenerAttached = false;
+    }
   }
 
   connectedCallback() {
@@ -1858,6 +1890,81 @@ class ChronoPictureCard extends LitElement {
     });
     this._templateUnsubs = [];
     this._subscribed     = false;
+  }
+
+  // ── Aspect-ratio fallback (v1.0.300) ────────────────────────────────────────
+  // When aspect_ratio is not explicitly configured, :host falls back to a CSS
+  // aspect-ratio (see static styles) that only takes effect when height:100%
+  // cannot resolve against an indefinite/collapsed parent. This measures the
+  // actual rendered media's native dimensions so that fallback is correct for
+  // the real camera/image instead of an arbitrary guess.
+  //
+  // The media element (video/img/canvas) is found via a generic recursive
+  // shadow-DOM search rather than a hardcoded path, since it can be nested
+  // arbitrarily deep inside HA-owned components (e.g. hui-image →
+  // ha-camera-stream → ha-web-rtc-player → video) and that internal structure
+  // is not something this card owns or can rely on staying the same.
+  _findMediaElement(root) {
+    if (!root) return null;
+    const direct = root.querySelector('video, img, canvas');
+    if (direct) return direct;
+    const all = root.querySelectorAll('*');
+    for (const el of all) {
+      if (el.shadowRoot) {
+        const found = this._findMediaElement(el.shadowRoot);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  _applyMeasuredRatio(w, h) {
+    if (!w || !h) return;
+    const ratio = `${w} / ${h}`;
+    if (ratio !== this._measuredAspectRatio) this._measuredAspectRatio = ratio;
+  }
+
+  _measureAspectRatioFromMedia() {
+    if (this._config?.aspect_ratio) return;      // explicit config always wins, no measurement needed
+    if (this._measuredAspectRatio) return;        // already have a value
+    if (this._aspectListenerAttached) return;      // already waiting on a listener
+
+    const media = this._findMediaElement(this.shadowRoot);
+    if (!media) return; // not rendered yet; updated() will retry on the next render pass
+
+    const tag = media.tagName.toLowerCase();
+
+    if (tag === 'video' && media.videoWidth && media.videoHeight) {
+      this._applyMeasuredRatio(media.videoWidth, media.videoHeight);
+      return;
+    }
+    if (tag === 'img' && media.naturalWidth && media.naturalHeight) {
+      this._applyMeasuredRatio(media.naturalWidth, media.naturalHeight);
+      return;
+    }
+    if (tag === 'canvas' && media.width && media.height) {
+      this._applyMeasuredRatio(media.width, media.height);
+      return;
+    }
+
+    // Dimensions not available yet — wait for the media to actually load.
+    this._aspectListenerAttached = true;
+    const eventName = tag === 'video' ? 'loadedmetadata' : 'load';
+    media.addEventListener(eventName, () => {
+      if (tag === 'video') this._applyMeasuredRatio(media.videoWidth, media.videoHeight);
+      else if (tag === 'img') this._applyMeasuredRatio(media.naturalWidth, media.naturalHeight);
+      else if (tag === 'canvas') this._applyMeasuredRatio(media.width, media.height);
+    }, { once: true });
+  }
+
+  updated(changedProps) {
+    super.updated?.(changedProps);
+    this._measureAspectRatioFromMedia();
+    if (this._config?.aspect_ratio) {
+      this.style.removeProperty('--chrono-fallback-ratio');
+    } else if (this._measuredAspectRatio) {
+      this.style.setProperty('--chrono-fallback-ratio', this._measuredAspectRatio);
+    }
   }
 
   // ── Action handling ───────────────────────────────────────────────────────
@@ -1999,6 +2106,7 @@ class ChronoPictureCard extends LitElement {
       display: block;
       width: 100%;
       height: 100%;
+      aspect-ratio: var(--chrono-fallback-ratio, 16 / 9);
       --video-max-height: none;
     }
     ha-card {
