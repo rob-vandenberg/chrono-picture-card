@@ -6,12 +6,26 @@ import { repeat }                from 'https://unpkg.com/lit@2.0.0/directives/re
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.0.300';
+const CARD_VERSION = '1.0.301';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.0.301: Restore domain-aware default tap for entity items, scoped to
+//          light and button only (partial revert of the v1.0.100 blanket
+//          more-info default). In _handleAction: when action is 'tap', no
+//          tap_action is configured, and config.entity's domain is 'light',
+//          default tap_action is now { action: 'toggle' }; for domain
+//          'button', default tap_action is now { action: 'perform-action',
+//          perform_action: 'button.press' }. All other domains (including
+//          script-backed items) keep the more-info default unchanged, since
+//          more-info intentionally acts as a confirmation step for
+//          higher-impact actions. hold_action default is unchanged for all
+//          domains (still more-info) — only the primary tap default changes
+//          for light/button. The vendored handleAction() (faithful copy of
+//          HA's own handler) is untouched; the override is injected only in
+//          the card's _handleAction wrapper before delegating to it.
 // v1.0.300: Added self-healing height for collapsed/indefinite parent containers
 //          (e.g. broken grid-layout rows, bare card in editor preview). :host now
 //          sets aspect-ratio as a fallback that only activates when height:100%
@@ -1981,6 +1995,23 @@ class ChronoPictureCard extends LitElement {
       this._openPopup(actionConfig);
       return;
     }
+
+    // Domain-aware default tap for light/button only. hold/double_tap and all
+    // other domains (e.g. script) keep the more-info default from
+    // handleAction(), which intentionally acts as a confirmation step for
+    // higher-impact actions.
+    if (action === 'tap' && !config.tap_action && config.entity) {
+      const domain = config.entity.split('.')[0];
+      if (domain === 'light') {
+        handleAction(this, this._hass, { ...config, tap_action: { action: 'toggle' } }, action);
+        return;
+      }
+      if (domain === 'button') {
+        handleAction(this, this._hass, { ...config, tap_action: { action: 'perform-action', perform_action: 'button.press' } }, action);
+        return;
+      }
+    }
+
     handleAction(this, this._hass, config, action);
   }
 
