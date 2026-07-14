@@ -6,12 +6,18 @@ import { repeat }                from 'https://unpkg.com/lit@2.0.0/directives/re
 import jsyaml                   from 'https://cdn.jsdelivr.net/npm/js-yaml@4/+esm';
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.0.301';
+const CARD_VERSION = '1.0.302';
 
 // ─── MDI icon paths ───────────────────────────────────────────────────────────
 const mdiDragHorizontalVariant = 'M9,3H11V5H9V3M13,3H15V5H13V3M9,7H11V9H9V7M13,7H15V9H13V7M9,11H11V13H9V11M13,11H15V13H13V11M9,15H11V17H9V15M13,15H15V17H13V15M9,19H11V21H9V19M13,19H15V21H13V19Z';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.0.302: Fix v1.0.301 button.press default doing nothing — the injected
+//          tap_action was missing target, so handleAction()'s perform-action
+//          case called button.press with no entity_id. Added
+//          target: { entity_id: config.entity } to the injected button
+//          tap_action. light.toggle default was unaffected (toggleEntity()
+//          reads config.entity directly, not target).
 // v1.0.301: Restore domain-aware default tap for entity items, scoped to
 //          light and button only (partial revert of the v1.0.100 blanket
 //          more-info default). In _handleAction: when action is 'tap', no
@@ -2007,7 +2013,7 @@ class ChronoPictureCard extends LitElement {
         return;
       }
       if (domain === 'button') {
-        handleAction(this, this._hass, { ...config, tap_action: { action: 'perform-action', perform_action: 'button.press' } }, action);
+        handleAction(this, this._hass, { ...config, tap_action: { action: 'perform-action', perform_action: 'button.press', target: { entity_id: config.entity } } }, action);
         return;
       }
     }
